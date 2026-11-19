@@ -64,9 +64,9 @@ async function main() {
   const password = randomBytes(30).toString("base64url");
   const emails = { alice: `matrix-${runId}-alice@example.test`, bob: `matrix-${runId}-bob@example.test` };
   const config = await anonymous.request("/api/account-config");
-  check(config.status === 200 && config.body?.emailReady === true, "Independent email account configuration is unavailable.");
+  check(config.status === 200 && config.body?.emailPasswordEnabled === true, "Independent email account configuration is unavailable.");
   check(typeof config.body.googleReady === "boolean", "Google availability must be reported explicitly.");
-  check(config.body.passwordResetReady === false, "Update this test when password-reset delivery is intentionally enabled.");
+  check(config.body.passwordResetEnabled === false, "Update this test when password-reset delivery is intentionally enabled.");
 
   const forged = { "oai-authenticated-user-id": "pretend-owner", "oai-authenticated-user-email": "owner@example.test", "OAI-Sites-Authorization": "Bearer not-a-real-platform-token" };
   let response = await anonymous.request("/api/library", { headers: forged });
