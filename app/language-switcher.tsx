@@ -1,21 +1,24 @@
 'use client';
 
-import { Languages } from 'lucide-react';
+import { useId } from 'react';
 import { useLanguage, type Language } from '@/lib/i18n';
 import styles from './language-switcher.module.css';
 
-const choices: { value: Language; label: string; name: string }[] = [
-  { value: 'en', label: 'ENG', name: 'English' },
-  { value: 'ru', label: 'РУС', name: 'Русский' },
-  { value: 'kk', label: 'ҚАЗ', name: 'Қазақша' },
+const choices: { value: Language; name: string }[] = [
+  { value: 'en', name: 'English' },
+  { value: 'ru', name: 'Русский' },
+  { value: 'kk', name: 'Қазақша' },
 ];
 
 export default function LanguageSwitcher() {
   const { language, setLanguage, t } = useLanguage();
-  return <div className={styles.switcher} role="group" aria-label={t('Interface language')}>
-    <Languages size={15} aria-hidden="true" className={styles.icon}/>
-    {choices.map(choice => <button key={choice.value} type="button" lang={choice.value}
-      className={styles.choice} aria-label={choice.name} title={choice.name}
-      aria-pressed={language === choice.value} onClick={() => setLanguage(choice.value)}>{choice.label}</button>)}
+  const headingId = useId();
+  return <div className={styles.setting}>
+    <h3 id={headingId}>{t('Interface language')}</h3>
+    <div className={styles.switcher} role="group" aria-labelledby={headingId}>
+      {choices.map(choice => <button key={choice.value} type="button" lang={choice.value}
+        className={styles.choice} aria-pressed={language === choice.value}
+        onClick={() => setLanguage(choice.value)}>{choice.name}</button>)}
+    </div>
   </div>;
 }
