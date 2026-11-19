@@ -31,9 +31,35 @@ function bounded<T>(promise: Promise<T>, signal?: AbortSignal, timeout = 45000):
   aborted(signal);
   return new Promise((resolve, reject) => {
     const fail = () => { cleanup(); reject(new DOMException('Upload cancelled.', 'AbortError')); };
-    const timer = setTimeout(() => { cleanup(); reject(new Error('This PowerPoint slide took too long to render. Export the presentation to PDF and upload that file.')); }, timeout);
-    function cleanup() { clearTimeout(timer); signal?.removeEventListener('abort', fail); }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let remaining = timeout;
+    let started = 0;
+    // Chart and text layout in the slide renderer need animation frames,
+    // which browsers can suspend while the tab is hidden.
+    function onVisibilityChange() {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+        remaining = Math.max(0, remaining - (performance.now() - started));
+      }
+      if (!document.hidden) {
+        started = performance.now();
+        timer = setTimeout(() => {
+          timer = undefined;
+          if (document.hidden) return;
+          cleanup();
+          reject(new Error('This PowerPoint slide took too long to render. Export the presentation to PDF and upload that file.'));
+        }, remaining);
+      }
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      signal?.removeEventListener('abort', fail);
+    }
     signal?.addEventListener('abort', fail, { once: true });
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    onVisibilityChange();
     promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
   });
 }
@@ -104,6 +130,43 @@ export async function preparePowerPointImage(image: HTMLImageElement): Promise<s
   }
 }
 
+type SlideToSvg = typeof import('html-to-image').toSvg;
+
+export async function capturePowerPointSlide(element: HTMLElement, toSvg: SlideToSvg, width: number, height: number, scale: number) {
+  const replacements: {canvas: HTMLCanvasElement; image: HTMLImageElement}[] = [];
+  try {
+    // html-to-image waits for an animation frame both when cloning canvases and
+    // when drawing the SVG. A browser can suspend those frames in a hidden tab.
+    for (const canvas of element.querySelectorAll('canvas')) {
+      if (!canvas.width || !canvas.height) continue;
+      const image = document.createElement('img');
+      image.width = canvas.width;
+      image.height = canvas.height;
+      image.className = canvas.className;
+      image.style.cssText = canvas.style.cssText;
+      image.src = canvas.toDataURL();
+      canvas.replaceWith(image);
+      replacements.push({canvas, image});
+    }
+    const svg = await toSvg(element, {
+      width, height, backgroundColor: '#ffffff', skipFonts: true,
+      filter: node => !['SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'AUDIO', 'VIDEO'].includes(node.nodeName),
+    });
+    const image = document.createElement('img');
+    image.src = svg;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Your browser could not prepare this slide image.');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    for (const {canvas, image} of replacements) image.replaceWith(canvas);
+  }
+}
+
 function encodeJpeg(canvas: HTMLCanvasElement): {data: string; width: number; height: number} {
   let current = canvas;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -129,11 +192,11 @@ function encodeJpeg(canvas: HTMLCanvasElement): {data: string; width: number; he
 }
 
 /** Render actual PowerPoint slide geometry and media, one slide at a time. */
-export async function* renderPowerPointVisuals(file: File, options: {signal?: AbortSignal} = {}): AsyncGenerator<PowerPointVisualPage> {
+export async function* renderPowerPointVisuals(file: File, options: {signal?: AbortSignal; onSlide?: (number: number) => void} = {}): AsyncGenerator<PowerPointVisualPage> {
   const {signal} = options;
   aborted(signal);
   if (file.size > 12 * 1024 * 1024) throw new Error('PowerPoint uploads can be up to 12 MB each.');
-  const [{parseZipLazyMedia, buildPresentation, renderSlide}, {toCanvas}, {default: JSZip}] = await Promise.all([
+  const [{parseZipLazyMedia, buildPresentation, renderSlide}, {toSvg}, {default: JSZip}] = await Promise.all([
     import('@aiden0z/pptx-renderer'), import('html-to-image'), import('jszip'),
   ]);
   const bytes = await bounded(file.arrayBuffer(), signal);
@@ -160,6 +223,7 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
   try {
     for (let index = 0; index < presentation.slides.length; index++) {
       aborted(signal);
+      options.onSlide?.(index + 1);
       const slide = presentation.slides[index];
       const sourceXml = files.slides.get(slide.slidePath) || slide.sourceXml || '';
       if (!sourceXml) throw new Error(`Slide ${index + 1} has no readable slide information.`);
@@ -234,15 +298,7 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
           }
         }
         const scale = Math.min(2200 / Math.max(presentation.width, presentation.height), 3);
-        canvas = await bounded(toCanvas(handle.element, {
-          pixelRatio: 1, backgroundColor: '#ffffff',
-          width: presentation.width, height: presentation.height,
-          canvasWidth: Math.max(1, Math.round(presentation.width * scale)),
-          canvasHeight: Math.max(1, Math.round(presentation.height * scale)),
-          // Never let capture inspect/download unrelated page stylesheet fonts.
-          skipFonts: true,
-          filter: node => !['SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'AUDIO', 'VIDEO'].includes(node.nodeName),
-        }), signal);
+        canvas = await bounded(capturePowerPointSlide(handle.element, toSvg, presentation.width, presentation.height, scale), signal);
         aborted(signal);
         const image = encodeJpeg(canvas);
         result = { ...image, mimeType: 'image/jpeg', label: `${file.name} — slide ${index + 1}${slide.hidden ? ' (hidden slide)' : ''}`, text, warnings: [...new Set(warnings)] };

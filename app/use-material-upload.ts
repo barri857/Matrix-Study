@@ -80,9 +80,17 @@ export function useMaterialUploads(options:Options){
         if(controller.signal.aborted)break;
         const item=itemsRef.current.find(current=>current.id===queued.id);if(!item)continue;
         patch(item.id,{status:'reading',message:'Preparing visual pages…'});
+        let rendering=true;
         try{
           const isPowerPoint=item.file.name.toLowerCase().endsWith('.pptx');
-          const iterator=isPowerPoint?(await import('../lib/visual-powerpoint')).renderPowerPointVisuals(item.file,{signal:controller.signal}):(await import('../lib/visual-documents')).renderVisualDocument(item.file,{signal:controller.signal});
+          const iterator=isPowerPoint?(await import('../lib/visual-powerpoint')).renderPowerPointVisuals(item.file,{
+            signal:controller.signal,
+            onSlide(number){
+              if(number<=item.pagesRead)return;
+              setProgress('Preparing {filename} · slide {number}');setProgressValues({filename:item.file.name,number});
+              patch(item.id,{message:'Preparing slide {number}…',messageValues:{number}});
+            },
+          }):(await import('../lib/visual-documents')).renderVisualDocument(item.file,{signal:controller.signal});
           let pageNumber=0;
           for await(const page of iterator){
             pageNumber++;
@@ -92,19 +100,21 @@ export function useMaterialUploads(options:Options){
             const detail=page.label;
             setProgress(isPowerPoint?'Reading {filename} · slide {number}':'Reading {filename} · page {number}');setProgressValues({filename:item.file.name,number:pageNumber});
             patch(item.id,{message:isPowerPoint?'Reading slide {number}…':'Reading page {number}…',messageValues:{number:pageNumber}});
+            rendering=false;
             const reply=await optionsRef.current.analyze(page,controller.signal);
             if(controller.signal.aborted)throw new DOMException('Reading stopped','AbortError');
             const current=itemsRef.current.find(current=>current.id===item.id);if(!current)break;
             const result=appendImportedBlock(valueRef.current,detail,reply);
             change(result.value);
             patch(item.id,{pagesRead:pageNumber,blocks:[...current.blocks,result.block],warnings:[...new Set([...current.warnings,...(page.warnings||[])])].slice(0,12)});
+            rendering=true;
           }
           if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:'done',message:isPowerPoint?'Visual reading complete · slides: {count}':'Visual reading complete · pages/images: {count}',messageValues:{count:pageNumber}});
         }catch(error){
           const stopped=controller.signal.aborted;
           if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:stopped?'stopped':'error',message:stopped?'Stopped. Read again to continue from the next unread page.':readingError(error,'Visual reading failed. Try again.')});
-          // A provider/format/size error requires a decision before any more paid requests.
-          break;
+          // An unreadable file is isolated. Provider failures and kit limits apply to the entire batch.
+          if(stopped||!rendering)break;
         }
       }
     }finally{controllerRef.current=null;working.current=false;if(mounted.current){setProgress('');setRunning(false);optionsRef.current.onBusy('')}}

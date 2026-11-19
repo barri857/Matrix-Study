@@ -28,5 +28,6 @@ export default function MaterialUpload({model,disabled}:{model:MaterialUploads;d
  <button type="button" className="icon-button material-remove" disabled={locked} aria-label={t('Remove {filename}',{filename:item.file.name})} title={t('Remove file')} onClick={()=>model.remove(item.id)}><X size={18}/></button>
  </li>)}</ul>}
  {model.pending&&<p className="tiny muted">{t('Generate reads any pending visuals first. You can stop and resume without rereading completed pages. Keep this tab open until reading finishes.')}</p>}
+ {model.running&&model.items.some(item=>item.status==='reading'&&item.file.name.toLowerCase().endsWith('.pptx'))&&<p className="tiny muted">{t('PowerPoint rendering resumes when you return to this tab.')}</p>}
  </div>;
 }

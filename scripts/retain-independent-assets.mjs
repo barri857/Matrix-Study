@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const releaseFile = 'asset-releases.json';
-const retainedReleases = 3;
+const retainedReleases = 4;
 const maxFilesPerRelease = 250;
 const maxAssetBytes = 25 * 1024 * 1024;
 const assetName = /^[a-zA-Z0-9_.-]+-[a-zA-Z0-9_-]{8}\.(?:js|mjs|css)$/;

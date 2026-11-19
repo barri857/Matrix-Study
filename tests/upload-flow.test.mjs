@@ -79,6 +79,26 @@ test('provider failure stops the batch and retry skips pages whose content was a
   app.cleanup();
 });
 
+test('a slide rendering failure leaves that file retryable and reads the queued PDF',async()=>{
+  const requests=[];const app=harness(async page=>{requests.push(page.label);return `Read ${page.label}`});
+  const visualPages=globalThis.visualPages;
+  globalThis.visualPages=async function*(file,options){
+    for await(const page of visualPages(file,options)){
+      if(file.name.endsWith('.pptx')&&page.label.endsWith('page 2'))throw new Error('Slide rendering timed out');
+      yield page;
+    }
+  };
+  await app.render().add([new File(['slides'],'slides.pptx'),new File(['pdf'],'next.pdf')]);
+  const result=await app.render().read();
+  assert.equal(result.complete,false);
+  assert.deepEqual(requests,['slides.pptx page 1','next.pdf page 1','next.pdf page 2']);
+  const [slides,pdf]=app.render().items;
+  assert.equal(slides.pagesRead,1);assert.equal(slides.status,'error');
+  assert.equal(pdf.pagesRead,2);assert.equal(pdf.status,'done');
+  assert.match(app.value,/Read next\.pdf page 2/);
+  app.cleanup();
+});
+
 test('removing an attachment removes its unchanged imported blocks and preserves other notes',()=>{
   const first=appendImportedBlock('My own notes','first.md','First imported notes');
   const second=appendImportedBlock(first.value,'second.md','Second imported notes');

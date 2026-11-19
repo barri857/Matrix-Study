@@ -29,7 +29,7 @@ npm run db:independent
 npm run deploy:independent
 ```
 
-`build:independent` builds the frontend and adds its static security headers. `db:independent` applies pending native migrations to the **remote production database**. `deploy:independent` rebuilds the app, retains hashed JavaScript and CSS for the previous three builds so existing tabs can find their readers, and publishes the Worker and assets. Deployment does not implicitly run database migrations.
+`build:independent` builds the frontend and adds its static security headers. `db:independent` applies pending native migrations to the **remote production database**. `deploy:independent` rebuilds the app, retains hashed JavaScript and CSS for the previous four builds so existing tabs can find their readers, and publishes the Worker and assets. Deployment does not implicitly run database migrations.
 
 Equivalent explicit database command:
 
