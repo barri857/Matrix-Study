@@ -22,7 +22,7 @@ await build({entryPoints:[join(root,'app/use-material-upload.ts')],outfile:outpu
 const {useMaterialUploads}=await import(pathToFileURL(output));
 const provenance=join(temporary,'provenance.mjs');
 await build({entryPoints:[join(root,'lib/upload-content.ts')],outfile:provenance,bundle:true,platform:'node',format:'esm'});
-const {appendImportedBlock,removeImportedBlocks}=await import(pathToFileURL(provenance));
+const {appendImportedBlock,removeImportedBlocks,splitStudyMaterial}=await import(pathToFileURL(provenance));
 after(async()=>{await unlink(output);await unlink(provenance);await rmdir(temporary)});
 
 function harness(analyze=async()=> 'Recognized diagram'){
@@ -99,6 +99,30 @@ test('a slide rendering failure leaves that file retryable and reads the queued 
   app.cleanup();
 });
 
+test('visual reading continues past the old kit limit and all content can be saved in parts',async()=>{
+  const app=harness(async page=>`Read ${page.label}\n`+'details '.repeat(8000));
+  await app.render().add([new File(['deck'],'slides.pptx'),new File(['pdf'],'next.pdf')]);
+  const result=await app.render().read();
+  assert.equal(result.complete,true);
+  assert.ok(result.text.length>240000);
+  assert.deepEqual(app.render().items.map(row=>row.pagesRead),[2,2]);
+  const parts=splitStudyMaterial(result.text);
+  assert.ok(parts.length>1);
+  assert.ok(parts.every(part=>part.length<=120000));
+  assert.equal(parts.join(''),result.text);
+  assert.match(parts[1],/^\[Source: /);
+  app.cleanup();
+});
+
+test('splitting preserves Unicode at a hard break and leaves meaningful material in the final part',()=>{
+  const value='a'.repeat(119999)+'😀'+'z'.repeat(2001);
+  const parts=splitStudyMaterial(value);
+  assert.equal(parts.join(''),value);
+  assert.equal(parts[0].length,119999);
+  assert.ok(parts[1].startsWith('😀'));
+  assert.ok(splitStudyMaterial('z'.repeat(120001)).at(-1).length>=2000);
+});
+
 test('removing an attachment removes its unchanged imported blocks and preserves other notes',()=>{
   const first=appendImportedBlock('My own notes','first.md','First imported notes');
   const second=appendImportedBlock(first.value,'second.md','Second imported notes');
@@ -111,6 +135,6 @@ test('removing an attachment removes its unchanged imported blocks and preserves
 test('source labels cannot inject lines, and an oversized append preserves the original value',()=>{
   const source='Existing content';
   assert.match(appendImportedBlock(source,'lecture\n[fake source]\u0000.md',' content ').value,/\[Source: lecture \[fake source\] .md\]\ncontent$/);
-  assert.throws(()=>appendImportedBlock(source,'big.md','x'.repeat(200),40),/120,000-character/);
+  assert.throws(()=>appendImportedBlock(source,'big.md','x'.repeat(200),40),/upload draft is full/);
   assert.equal(source,'Existing content');
 });

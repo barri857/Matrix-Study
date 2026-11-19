@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {readStudyFile,MAX_STUDY_FILE_BYTES} from '../lib/files';
-import {appendImportedBlock,removeImportedBlocks,type ImportedBlock} from '../lib/upload-content';
+import {appendImportedBlock,removeImportedBlocks,MAX_UPLOAD_DRAFT_CHARACTERS,type ImportedBlock} from '../lib/upload-content';
 import type {VisualPage} from '../lib/visual-documents';
 import {useLanguage,type TranslationVariables} from '../lib/i18n';
 import {uploadTranslations} from '../lib/upload-translations';
@@ -49,7 +49,7 @@ export function useMaterialUploads(options:Options){
             if(['jpg','jpeg','png','webp','gif','bmp'].includes(extension))patch(id,{preview:URL.createObjectURL(file)});
             added++;
           }else{
-            const text=await readStudyFile(file);
+            const text=await readStudyFile(file,MAX_UPLOAD_DRAFT_CHARACTERS);
             if(controller.signal.aborted||!mounted.current)throw new DOMException('Reading stopped','AbortError');
             if(!itemsRef.current.some(item=>item.id===id))continue;
             const result=appendImportedBlock(valueRef.current,file.name,text);
@@ -89,6 +89,11 @@ export function useMaterialUploads(options:Options){
               if(number<=item.pagesRead)return;
               setProgress('Preparing {filename} · slide {number}');setProgressValues({filename:item.file.name,number});
               patch(item.id,{message:'Preparing slide {number}…',messageValues:{number}});
+            },
+            onPdfFallback(number){
+              if(number<=item.pagesRead)return;
+              setProgress('Converting {filename} · slide {number} to PDF');setProgressValues({filename:item.file.name,number});
+              patch(item.id,{message:'Converting slide {number} to PDF…',messageValues:{number}});
             },
           }):(await import('../lib/visual-documents')).renderVisualDocument(item.file,{signal:controller.signal});
           let pageNumber=0;

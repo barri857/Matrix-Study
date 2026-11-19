@@ -1,17 +1,10 @@
 import type JSZip from 'jszip';
 import type { PptxFiles } from '@aiden0z/pptx-renderer';
 import type { EChartsType, EChartsOption } from 'echarts';
+import type { VisualPage } from './visual-documents';
 import { parsePowerPointXml, powerPointFeatureWarnings, powerPointSourceText, resolvePowerPointPart } from './powerpoint-content';
 
-export interface PowerPointVisualPage {
-  data: string;
-  mimeType: 'image/jpeg';
-  label: string;
-  text: string;
-  width: number;
-  height: number;
-  warnings?: string[];
-}
+export type PowerPointVisualPage = VisualPage;
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const ZIP_LIMITS = {
@@ -192,7 +185,11 @@ function encodeJpeg(canvas: HTMLCanvasElement): {data: string; width: number; he
 }
 
 /** Render actual PowerPoint slide geometry and media, one slide at a time. */
-export async function* renderPowerPointVisuals(file: File, options: {signal?: AbortSignal; onSlide?: (number: number) => void} = {}): AsyncGenerator<PowerPointVisualPage> {
+export async function* renderPowerPointVisuals(file: File, options: {
+  signal?: AbortSignal;
+  onSlide?: (number: number) => void;
+  onPdfFallback?: (number: number) => void;
+} = {}): AsyncGenerator<PowerPointVisualPage> {
   const {signal} = options;
   aborted(signal);
   if (file.size > 12 * 1024 * 1024) throw new Error('PowerPoint uploads can be up to 12 MB each.');
@@ -265,8 +262,11 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
       });
       let canvas: HTMLCanvasElement | undefined;
       let result: PowerPointVisualPage | undefined;
+      const label = `${file.name} — slide ${index + 1}${slide.hidden ? ' (hidden slide)' : ''}`;
+      const scale = Math.min(2200 / Math.max(presentation.width, presentation.height), 3);
       try {
         host.replaceChildren(handle.element);
+        for (const link of handle.element.querySelectorAll('a')) link.removeAttribute('href');
         await bounded(handle.ready, signal);
         // The slide renderer starts ECharts with entrance animations enabled.
         // Its ready promise signals initialization, not animation completion;
@@ -288,8 +288,6 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
           Array.from(handle.element.querySelectorAll('img'), preparePowerPointImage),
         ), signal);
         for (const warning of imageWarnings) if (warning) warnings.push(warning);
-        // No document-supplied hyperlink should survive into the capture DOM.
-        for (const link of handle.element.querySelectorAll('a')) link.removeAttribute('href');
         // EOT fonts are loaded as FontFace objects, which foreignObject captures cannot embed.
         // Use their original family names so the browser can select an installed equivalent.
         if (presentation.embeddedFontFamilies?.size) for (const element of handle.element.querySelectorAll<HTMLElement>('*')) {
@@ -297,11 +295,25 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
             if (element.style.fontFamily.includes(renderFamily)) element.style.fontFamily = element.style.fontFamily.replaceAll(renderFamily, family);
           }
         }
-        const scale = Math.min(2200 / Math.max(presentation.width, presentation.height), 3);
         canvas = await bounded(capturePowerPointSlide(handle.element, toSvg, presentation.width, presentation.height, scale), signal);
         aborted(signal);
         const image = encodeJpeg(canvas);
-        result = { ...image, mimeType: 'image/jpeg', label: `${file.name} — slide ${index + 1}${slide.hidden ? ' (hidden slide)' : ''}`, text, warnings: [...new Set(warnings)] };
+        result = { ...image, mimeType: 'image/jpeg', label, text, warnings: [...new Set(warnings)] };
+      } catch {
+        aborted(signal);
+        options.onPdfFallback?.(index + 1);
+        const fallback = new AbortController();
+        const fallbackSignal = signal ? AbortSignal.any([signal, fallback.signal]) : fallback.signal;
+        try {
+          const { recoverPowerPointSlide } = await import('./powerpoint-pdf-fallback');
+          const page = await bounded(recoverPowerPointSlide(handle.element, presentation.width, presentation.height, scale, fallbackSignal), fallbackSignal);
+          result = { ...page, label, text, warnings: [...new Set([...warnings, 'A slide was recovered through PDF. Some formatting may differ.'])] };
+        } catch {
+          aborted(signal);
+          throw new Error('This slide could not be recovered. Upload an unlocked copy or export the deck from PowerPoint.');
+        } finally {
+          fallback.abort();
+        }
       } finally {
         if (canvas) { canvas.width = 1; canvas.height = 1; }
         handle.dispose(); host.replaceChildren();

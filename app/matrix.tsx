@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {demoKits,validateKit,reviewCard,mastery,dueCards,formatRelative,MAX_GUIDE_IMAGES,MAX_SYNCED_KIT_BYTES,type GuideImage,type Kit,type Card,type Question} from '../lib/study';
 import {downloadFile} from '../lib/files';
+import {MAX_KIT_SOURCE_CHARACTERS,MAX_UPLOAD_DRAFT_CHARACTERS,splitStudyMaterial} from '../lib/upload-content';
 import type {GuideDownloadFormat} from '../lib/guide-download';
 import {GuideActions} from './guide-actions';
 import MaterialUpload from './material-upload';
@@ -59,6 +60,7 @@ export default function Matrix(){
   return()=>{window.removeEventListener('dragover',fileDrag);window.removeEventListener('drop',missedDrop)};
  },[create,settings]);
  const [draftTitle,setDraftTitle]=useState(''),[draftSubject,setDraftSubject]=useState('General'),[draftText,setDraftText]=useState(''),[inputMode,setInputMode]=useState('paste'),[combineIds,setCombineIds]=useState<string[]>([]);
+ const draftGeneration=useRef<{sources:string[];connection:string;generated:Map<number,Kit>}|null>(null);
  const [materialDraft,setMaterialDraft]=useState({id:'',title:'',subject:'',source:''}),[shareConsent,setShareConsent]=useState<Kit|null>(null);
  const [cardIndex,setCardIndex]=useState(0),[flipped,setFlipped]=useState(false),[cardMode,setCardMode]=useState('due'),[editing,setEditing]=useState(false),[guideDraft,setGuideDraft]=useState(''),[guideDraftBase,setGuideDraftBase]=useState(''),[newCard,setNewCard]=useState(false),[front,setFront]=useState(''),[back,setBack]=useState('');
  const [guideDownloadFormat,setGuideDownloadFormat]=useState<GuideDownloadFormat>('pdf');
@@ -200,10 +202,100 @@ export default function Matrix(){
    }
    read(0);
  }
- async function aiCall(action:string,text='',question=''){if(!api.apiKey){setSettings('ai');throw new Error('Connect your AI provider in Settings to continue.');}if(text.length>120000)throw new Error('This material is too long for AI. Split it into kits of up to 120,000 characters.');return jsonRequest<Kit & {kit?:Kit;reply:string}>('/api/ai',{method:'POST',body:JSON.stringify({...api,action,text,question,history:chat.slice(-12)})})}
- async function generate(existing?:Kit){if(!api.apiKey){setSettings('ai');return notify(t("Connect an AI provider, then generate your kit."),true)}let prepared=draftText;if(!existing&&inputMode!=='combine'){const result=await uploads.read();if(!result.complete)return;prepared=result.text;}const source=existing?.source||((inputMode==='combine')?kits.filter(k=>combineIds.includes(k.id)).map(k=>`# ${k.title}\n${k.source}`).join('\n\n'):inputMode==='describe'?`Create an introductory learning kit on this topic: ${prepared}`:prepared);if(source.trim().length<20)return notify(t("Add at least 20 characters of material or a detailed topic."),true);if(source.length>120000)return notify(t("Please split this material into smaller kits (up to 120,000 characters)."),true);
- if(!api.apiKey){setSettings('ai');return notify(t("Connect an AI provider, then generate your kit."),true)}setBusy('Creating your study kit');try{const result=await aiCall('generate',source);const data=result.kit||result;const kit=validateKit({id:existing?.id||crypto.randomUUID(),title:existing?.title||draftTitle||data.title,subject:existing?.subject||draftSubject,color:existing?.color||'#a78bfa',source,summary:data.summary,guide:data.guide,guideImages:existing?.guideImages,cards:data.cards,questions:data.questions,updatedAt:Date.now()});if(!saveKit(kit))return;setSelected(kit.id);setCreate(false);setDraftText('');setDraftTitle('');if(!existing)uploads.reset();go('guide');notify(t("Your study kit is ready."))}catch(e){notify((e as Error).message,true)}finally{setBusy('')}}
- async function saveMaterial(){let prepared=draftText;if(inputMode!=='combine'){const result=await uploads.read();if(!result.complete)return;prepared=result.text;}const source=inputMode==='combine'?kits.filter(k=>combineIds.includes(k.id)).map(k=>`# ${k.title}\n${k.source}`).join('\n\n'):prepared;if(!source.trim()||!draftTitle.trim())return notify(t("Add a title and some material first."),true);if(source.length>120000)return notify(t("Split this material into kits of up to 120,000 characters."),true);try{const kit=validateKit({id:crypto.randomUUID(),title:draftTitle.trim(),subject:draftSubject.trim()||'General',color:'#8fbaf5',source,summary:'Your material is ready. Generate a study kit when you connect an AI provider.',guide:'',cards:[],questions:[],updatedAt:Date.now()});saveKit(kit);setSelected(kit.id);setCreate(false);setDraftText('');setDraftTitle('');uploads.reset();go('materials');notify(t("Material saved."))}catch(e){notify((e as Error).message,true)}}
+ async function aiCall(action:string,text='',question=''){
+   if(!api.apiKey){setSettings('ai');throw new Error('Connect your AI provider in Settings to continue.');}
+   if(text.length>MAX_KIT_SOURCE_CHARACTERS)throw new Error('This material is too long for AI. Split it into kits of up to 120,000 characters.');
+   return jsonRequest<Kit & {kit?:Kit;reply:string}>('/api/ai',{method:'POST',body:JSON.stringify({...api,action,text,question,history:chat.slice(-12)})});
+ }
+ function draftSource(text:string,forGeneration=false){
+   if(inputMode==='combine')return kits.filter(kit=>combineIds.includes(kit.id)).map(kit=>`# ${kit.title}\n${kit.source}`).join('\n\n');
+   return forGeneration&&inputMode==='describe'?`Create an introductory learning kit on this topic: ${text}`:text;
+ }
+ function partTitle(title:string,index:number,total:number){
+   return total===1?title.slice(0,160):t('{title} · Part {part} of {count}',{title:title.slice(0,120),part:index+1,count:total});
+ }
+ function finishNewKits(created:Kit[],next:'materials'|'guide'){
+   // Kits are added at the front of the library. Insert the last part first.
+   for(const kit of [...created].reverse())saveKit(kit);
+   draftGeneration.current=null;
+   uploads.reset();
+   setCreate(false);setDraftText('');setDraftTitle('');
+   openKit(created[0].id,next);
+   notify(created.length>1?t('{count} numbered kits saved.',{count:created.length}):t(next==='guide'?'Your study kit is ready.':'Material saved.'));
+ }
+ function checkDraftSize(source:string,parts:string[]){
+   if(source.length>MAX_UPLOAD_DRAFT_CHARACTERS){
+     notify(t('This upload draft is full. Shorten the draft or remove a file before continuing.'),true);return false;
+   }
+   if(userRef.current&&libraryRef.current.length+parts.length>100){
+     notify(t('Your library reached its 100-kit limit.'),true);return false;
+   }
+   return true;
+ }
+ async function generate(existing?:Kit){
+   if(!api.apiKey){setSettings('ai');return notify(t('Connect an AI provider, then generate your kit.'),true);}
+   let prepared=draftText;
+   if(!existing&&inputMode!=='combine'){
+     const result=await uploads.read();
+     if(!result.complete)return;
+     prepared=result.text;
+   }
+   const source=existing?.source||draftSource(prepared,true);
+   if(source.trim().length<20)return notify(t('Add at least 20 characters of material or a detailed topic.'),true);
+   const parts=existing?[source]:splitStudyMaterial(source);
+   if(!existing&&!checkDraftSize(source,parts))return;
+   if(!existing&&parts.length>1&&parts.length!==draftKitCount){
+     return notify(t('Material is ready in {count} parts. Choose Generate to create the kits.',{count:parts.length}));
+   }
+   const connection=api.provider+':'+api.model;
+   const previous=draftGeneration.current;
+   const reusable=previous?.connection===connection&&previous.sources.length===parts.length&&parts.every((part,index)=>part===previous.sources[index]);
+   const generated=!existing&&reusable?previous.generated:new Map<number,Kit>();
+   if(!existing)draftGeneration.current={sources:parts,connection,generated};
+   setBusy('Creating your study kit');
+   try{
+     const created:Kit[]=[];
+     for(const [index,part] of parts.entries()){
+       if(parts.length>1)setBusy(t('Creating kit {part} of {count}',{part:index+1,count:parts.length}));
+       let data=generated.get(index);
+       if(!data){
+         const result=await aiCall('generate',part);
+         data=result.kit||result;
+       }
+       created.push(validateKit({
+         id:existing?.id||crypto.randomUUID(),title:existing?.title||partTitle(draftTitle.trim()||data.title,index,parts.length),
+         subject:existing?.subject||draftSubject,color:existing?.color||'#a78bfa',source:part,summary:data.summary,guide:data.guide,
+         guideImages:existing?.guideImages,cards:data.cards,questions:data.questions,updatedAt:Date.now(),
+       }));
+       generated.set(index,data);
+     }
+     if(existing){
+       if(saveKit(created[0])){openKit(created[0].id,'guide');notify(t('Your study kit is ready.'));}
+     }else finishNewKits(created,'guide');
+   }catch(error){notify((error as Error).message,true)}finally{setBusy('')}
+ }
+ async function saveMaterial(){
+   let prepared=draftText;
+   if(inputMode!=='combine'){
+     const result=await uploads.read();
+     if(!result.complete)return;
+     prepared=result.text;
+   }
+   const source=draftSource(prepared);
+   const title=draftTitle.trim();
+   if(!source.trim()||!title)return notify(t('Add a title and some material first.'),true);
+   const parts=splitStudyMaterial(source);
+   if(!checkDraftSize(source,parts))return;
+   try{
+     const created=parts.map((part,index)=>validateKit({
+       id:crypto.randomUUID(),title:partTitle(title,index,parts.length),subject:draftSubject.trim()||'General',color:'#8fbaf5',
+       source:part,summary:'Your material is ready. Generate a study kit when you connect an AI provider.',
+       guide:'',cards:[],questions:[],updatedAt:Date.now(),
+     }));
+     finishNewKits(created,'materials');
+   }catch(error){notify((error as Error).message,true)}
+ }
+ const draftKitCount=create?splitStudyMaterial(draftSource(draftText,true)).length:1;
  async function importKit(file?:File){if(!file)return;try{if(file.size>700000)throw new Error('This kit is too large to import.');const kit=validateKit(JSON.parse(await file.text()));const copy={...kit,id:crypto.randomUUID(),demo:false,updatedAt:Date.now()};saveKit(copy);openKit(copy.id);notify(t("Study kit imported."))}catch(e){notify((e as Error).message,true)}finally{if(importRef.current)importRef.current.value=''}}
  function importGuestKits(){if(!userRef.current)return;try{const guest=validKits(JSON.parse(localStorage.getItem('matrix-kits-guest')||'[]')).filter(k=>!k.demo);const marker='matrix-imported-guest-'+userRef.current.id;const previous:unknown=JSON.parse(localStorage.getItem(marker)||'[]');const imported=new Set(Array.isArray(previous)?previous.filter((value):value is string=>typeof value==='string'):[]);const candidates=guest.filter(k=>!imported.has(k.id+':'+k.updatedAt));const available=Math.max(0,100-libraryRef.current.length);const copies=candidates.slice(0,available);for(const kit of copies){saveKit({...kit,id:crypto.randomUUID(),demo:false,updatedAt:Date.now()});imported.add(kit.id+':'+kit.updatedAt);}localStorage.setItem(marker,JSON.stringify([...imported]));notify(copies.length?t('Guest kits imported: {count}.',{count:copies.length})+(copies.length<candidates.length?' '+t('Your library reached its 100-kit limit.'):''):t(candidates.length?'Remove a kit before importing more.':'No new guest kits found on this browser.'));}catch{notify(t("Could not read this browser’s guest library."),true)}}
  function openSample(){const existing=libraryRef.current.find(k=>k.id===demoKits[0].id);if(existing){openKit(existing.id);return;}const sample={...demoKits[0],id:crypto.randomUUID(),updatedAt:Date.now()};saveKit(sample);openKit(sample.id)}
@@ -306,7 +398,7 @@ export default function Matrix(){
  {view==='focus'&&<><div className="page-heading"><div><div className="eyebrow">{t("MATRIX FOCUS")}</div><h1>{t("A little space to think.")}</h1><p>{t("One task. A clear mind. Your own pace.")}</p></div></div><div className="panel focus-panel" aria-busy={!focusReady}><div className="tabs">{[25,50,5,15].map(m=><button key={m} className={`tab ${!focusCustom&&focusMinutes===m?'active':''}`} onClick={()=>{setFocusCustom(false);setFocusMinutes(m);setFocusRemaining(m*60);setFocusEnd(0)}}>{t(m===25?'Focus':m===50?'Deep work':m===5?'Short break':'Long break')} · {m}{t("m")}</button>)}<button className={`tab ${focusCustom?'active':''}`} onClick={applyCustomTimer}>{t("Custom")}</button></div><form className="custom-timer" onSubmit={event=>{event.preventDefault();applyCustomTimer()}}><label className="field" htmlFor="custom-focus-minutes">{t("Custom duration (minutes)")}<input id="custom-focus-minutes" className="input" type="number" min={1} max={240} step={1} value={customMinutes} onChange={event=>setCustomMinutes(event.target.value)} required/></label><button className="button secondary" type="submit">{t("Set timer")}</button><span className="tiny muted">{t("1–240 minutes. Setting a duration resets the timer.")}</span></form><div className={`focus-orb ${focusEnd?'running':''}`}><span className="eyebrow">{t(focusEnd?'STAY WITH THIS MOMENT':'WHEN YOU’RE READY')}</span><div className="timer-display">{Math.floor(focusRemaining/60).toString().padStart(2,'0')}<span>:</span>{(focusRemaining%60).toString().padStart(2,'0')}</div><p className="muted">{t((focusCustom||focusMinutes>15)?'You don’t have to do it all. Just begin.':'Rest is part of the process.')}</p></div><div className="rating-actions"><button className="button primary" onClick={()=>focusEnd?setFocusEnd(0):setFocusEnd(Date.now()+(focusRemaining||focusMinutes*60)*1000)}>{focusEnd?<Pause size={18}/>:<Play size={18}/>} {t(focusEnd?'Pause':'Begin session')}</button><button className="button secondary" onClick={()=>{setFocusEnd(0);setFocusRemaining(focusMinutes*60)}}><RotateCcw size={17}/>{t("Reset")}</button></div><p className="tiny muted">{t("Keep this page open. The timer stays accurate when you switch tabs.")}</p></div></>}
  </div><footer className="app-footer"><span><Logo/>{t("matrix")}</span><p>{t("A space for your next possibility.")}</p><button onClick={()=>setSettings('account')}>{t("Your data & privacy")}</button></footer></main>
  <nav className="mobile-nav" aria-label={t("Mobile navigation")}>{nav.slice(0,4).map(n=><button className={view===n.id?'active':''} key={n.id} onClick={()=>go(n.id)}><n.icon size={20}/><span>{t(n.id==='home'?'Home':n.label)}</span></button>)}<button onClick={()=>setMenu(true)}><Menu size={20}/><span>{t("More")}</span></button></nav>
- {create&&!settings&&<Modal title={t("Create your next study kit")} close={()=>!busy&&setCreate(false)} wide><p className="muted">{t("Start with what you have. Matrix helps you make sense of it.")}</p><div className="tabs input-tabs">{[{id:'paste',name:'Paste notes',icon:FileText},{id:'upload',name:'Upload',icon:Upload},{id:'describe',name:'Topic',icon:Sparkles},{id:'youtube',name:'Video transcript',icon:LinkIcon},{id:'combine',name:'Combine',icon:Combine}].map(m=><button className={`tab ${inputMode===m.id?'active':''}`} key={m.id} disabled={!!busy} onClick={()=>setInputMode(m.id)}><m.icon size={16}/>{t(m.name)}</button>)}</div><div className="form-grid"><label className="field">{t("Kit title")}<input className="input" placeholder={t("e.g. Design and Analysis of Algorithms")} value={draftTitle} onChange={e=>setDraftTitle(e.target.value)} maxLength={160}/></label><label className="field">{t("Subject / course")}<input className="input" placeholder={t("e.g. DAA")} value={draftSubject} onChange={e=>setDraftSubject(e.target.value)} maxLength={80}/></label></div>{inputMode==='upload'&&<MaterialUpload model={uploads} disabled={!!busy}/>}{inputMode==='youtube'&&<div className="notice"><LinkIcon size={19}/><p>{t("Copy a video’s transcript or upload its SRT/VTT captions. Matrix studies the transcript; it does not download videos.")}</p></div>}{inputMode==='combine'?<div className="combine-list">{kits.map(k=><label className="check-row" key={k.id}><input type="checkbox" checked={combineIds.includes(k.id)} onChange={e=>setCombineIds(p=>e.target.checked?[...p,k.id]:p.filter(id=>id!==k.id))}/>{k.title}</label>)}</div>:<label className="field">{t(inputMode==='describe'?'What would you like to learn?':'Your material')}<textarea className="textarea" rows={9} placeholder={t(inputMode==='describe'?'Describe your topic, level, goals, and language. For example: explain graph algorithms to a second-year student, with worked examples.':'Paste your notes or transcript here. You can review and edit extracted document text before generating.')} value={draftText} disabled={uploads.running} onChange={e=>setDraftText(e.target.value)} maxLength={120000}/></label>}<div className="modal-footer"><span className="tiny muted">{api.apiKey?t('Powered by your {provider} API',{provider:providers[api.provider]?.name||api.provider}):t('Connect your AI in Settings to generate')}</span><div className="top-actions"><button className="button secondary" onClick={saveMaterial} disabled={!!busy}>{t("Save material")}</button><button className="button primary" onClick={()=>generate()} disabled={!!busy}><Sparkles size={17}/>{t(busy||'Generate study kit')}</button></div></div></Modal>}
+ {create&&!settings&&<Modal title={t("Create your next study kit")} close={()=>!busy&&setCreate(false)} wide><p className="muted">{t("Start with what you have. Matrix helps you make sense of it.")}</p><div className="tabs input-tabs">{[{id:'paste',name:'Paste notes',icon:FileText},{id:'upload',name:'Upload',icon:Upload},{id:'describe',name:'Topic',icon:Sparkles},{id:'youtube',name:'Video transcript',icon:LinkIcon},{id:'combine',name:'Combine',icon:Combine}].map(m=><button className={`tab ${inputMode===m.id?'active':''}`} key={m.id} disabled={!!busy} onClick={()=>setInputMode(m.id)}><m.icon size={16}/>{t(m.name)}</button>)}</div><div className="form-grid"><label className="field">{t("Kit title")}<input className="input" placeholder={t("e.g. Design and Analysis of Algorithms")} value={draftTitle} onChange={e=>setDraftTitle(e.target.value)} maxLength={160}/></label><label className="field">{t("Subject / course")}<input className="input" placeholder={t("e.g. DAA")} value={draftSubject} onChange={e=>setDraftSubject(e.target.value)} maxLength={80}/></label></div>{inputMode==='upload'&&<MaterialUpload model={uploads} disabled={!!busy}/>}{inputMode==='youtube'&&<div className="notice"><LinkIcon size={19}/><p>{t("Copy a video’s transcript or upload its SRT/VTT captions. Matrix studies the transcript; it does not download videos.")}</p></div>}{inputMode==='combine'?<div className="combine-list">{kits.map(k=><label className="check-row" key={k.id}><input type="checkbox" checked={combineIds.includes(k.id)} onChange={e=>setCombineIds(p=>e.target.checked?[...p,k.id]:p.filter(id=>id!==k.id))}/>{k.title}</label>)}</div>:<label className="field">{t(inputMode==='describe'?'What would you like to learn?':'Your material')}<textarea className="textarea" rows={9} placeholder={t(inputMode==='describe'?'Describe your topic, level, goals, and language. For example: explain graph algorithms to a second-year student, with worked examples.':'Paste your notes or transcript here. You can review and edit extracted document text before generating.')} value={draftText} disabled={!!busy} onChange={e=>setDraftText(e.target.value)} maxLength={MAX_UPLOAD_DRAFT_CHARACTERS}/></label>}{draftKitCount>1&&<p className="tiny muted" role="status">{t('This material will be saved as {count} numbered kits.',{count:draftKitCount})}</p>}<div className="modal-footer"><span className="tiny muted">{api.apiKey?t('Powered by your {provider} API',{provider:providers[api.provider]?.name||api.provider}):t('Connect your AI in Settings to generate')}</span><div className="top-actions"><button className="button secondary" onClick={saveMaterial} disabled={!!busy}>{t("Save material")}</button><button className="button primary" onClick={()=>generate()} disabled={!!busy}><Sparkles size={17}/>{busy?t(busy):draftKitCount>1?t('Generate {count} study kits',{count:draftKitCount}):t('Generate study kit')}</button></div></div></Modal>}
  {settings&&<Modal title={t("Make Matrix yours")} close={()=>setSettings('')} wide><div className="tabs settings-nav">{[{id:'appearance',name:'Appearance',icon:Palette},{id:'general',name:'General',icon:Settings},{id:'ai',name:'AI connection',icon:Plug},{id:'account',name:'Your workspace',icon:Monitor}].map(m=><button className={`tab ${settings===m.id?'active':''}`} key={m.id} onClick={()=>setSettings(m.id)}><m.icon size={17}/>{t(m.name)}</button>)}</div>{settings==='appearance'&&<><LanguageSwitcher/><h3>{t("A mood for every mind.")}</h3><p className="muted">{t("Six distinctive themes. One space that feels like you.")}</p><div className="theme-grid">{themes.map(themeOption=><button className={`theme-card ${theme===themeOption.id?'selected':''}`} key={themeOption.id} aria-pressed={theme===themeOption.id} onClick={()=>{setTheme(themeOption.id);setAccent('')}}><div className="theme-preview" style={{background:themeOption.bg}}><i style={{background:themeOption.card}}/><div><b style={{background:themeOption.accent}}/><span style={{background:themeOption.card}}/><span style={{background:themeOption.card}}/></div></div><strong>{t(themeOption.name)}</strong>{theme===themeOption.id&&<Check size={15}/>}</button>)}</div><h3>{t("Interface accent")}</h3><p className="muted tiny">{t("Add your own color to the details.")}</p><div className="accent-grid">{[{name:'Slate',color:'#505b75'},{name:'Black',color:'#000000'},{name:'Blue',color:'#5ba0ff'},{name:'Purple',color:'#b69aff'},{name:'Pink',color:'#f196c4'},{name:'Red',color:'#f28c8c'},{name:'Orange',color:'#f1a36b'},{name:'Gold',color:'#edcb6c'},{name:'Green',color:'#b6ef86'}].map(a=><button className={`accent-swatch ${accent===a.color?'selected':''}`} key={a.name} aria-pressed={accent===a.color} onClick={()=>setAccent(a.color)}><i style={{background:a.color}}/>{t(a.name)}</button>)}<label className="accent-swatch"><input type="color" value={accent||themes.find(t=>t.id===theme)?.accent||'#b6ef86'} onChange={e=>setAccent(e.target.value)}/>{t("Custom")}</label></div><button className="button secondary small" onClick={()=>setAccent('')}>{t("Reset theme accent")}</button></>}{settings==='general'&&<div className="guide-download-settings">
     <h3>{t('Guide downloads')}</h3>
     <label className="field">
