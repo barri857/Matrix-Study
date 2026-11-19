@@ -94,6 +94,9 @@
 .guide-download-settings .field { max-width: 320px; }
 .guide .markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .guide .markdown th, .guide .markdown td { border: 1px solid var(--border); padding: 7px 10px; }
+@media (pointer: coarse) {
+  .input, .textarea, .select, .search-field input { font-size: 1rem; }
+}
 @media (max-width: 520px) {
   .settings-nav { display: grid; grid-template-columns: repeat(2, 1fr); }
 }
