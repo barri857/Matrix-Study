@@ -11,12 +11,17 @@
     "build": "node scripts/run-framework.mjs build",
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "build:independent": "vite build --config vite.independent.config.ts && node scripts/independent-security-assets.mjs",
+    "dev:independent": "wrangler dev --config independent/wrangler.json --port 8787",
+    "deploy:independent": "npm run build:independent && wrangler deploy --config independent/wrangler.json",
+    "db:independent": "wrangler d1 migrations apply matrix-study --config independent/wrangler.json --remote"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
     "@shadcn/react": "^0.3.0",
+    "better-auth": "^1.7.26",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "^1.1.1",

@@ -171,11 +171,38 @@ export async function runAI(input: AIRequest, fetcher: typeof fetch = fetch) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
   try {
-    const response = await fetcher(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(request.body), signal: controller.signal, redirect: "error" });
-    if (!response.ok) {
+    // Workers supports manual/follow only. Never follow a redirect with a visitor's key.
+    let response: Response;
+    try {
+      response = await fetcher(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(request.body), signal: controller.signal, redirect: "manual" });
+    } catch {
+      if (controller.signal.aborted) throw new SafeError("The AI provider took too long to respond. Try a shorter source or a faster model.", 504);
+      throw new SafeError("Matrix could not connect to the AI provider. Try again shortly; if this continues, the service connection needs attention.", 502);
+    }
+    if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
+      throw new SafeError("The AI provider redirected the request. Matrix stopped it to protect your API key. Please try another provider while this connection is checked.", 502);
+    }
+    if (!response.ok) {
       const status = response.status;
-      if (status === 401 || status === 403) throw new SafeError("Your provider rejected this API key or model access. Check the key, permissions, and provider. Claude keys must be scoped to a workspace.", 401);
+      // Read only bounded, structured reason codes. Never return upstream messages,
+      // which may contain credentials, project identifiers, or submitted material.
+      let reasons: string[] = [];
+      if (input.provider === "gemini" && (status === 400 || status === 401 || status === 403)) {
+        try {
+          const errorData = await readBoundedJson(response, 65536) as { error?: { details?: unknown } };
+          if (Array.isArray(errorData?.error?.details)) {
+            reasons = errorData.error.details.flatMap(detail => detail && typeof detail === "object" && "reason" in detail && typeof detail.reason === "string" ? [detail.reason] : []);
+          }
+        } catch { /* Fall back to the HTTP status without revealing provider output. */ }
+      } else {
+        await response.body?.cancel();
+      }
+      if (reasons.some(reason => ["API_KEY_INVALID", "API_KEY_EXPIRED", "CREDENTIALS_MISSING"].includes(reason))) throw new SafeError("Google rejected this API key. Check that you copied a current Gemini API key from Google AI Studio.", 401);
+      if (reasons.some(reason => ["API_KEY_HTTP_REFERRER_BLOCKED", "API_KEY_IP_ADDRESS_BLOCKED", "API_KEY_ANDROID_APP_BLOCKED", "API_KEY_IOS_APP_BLOCKED"].includes(reason))) throw new SafeError("This Google key's application restrictions block Matrix's server. Use a separate key intended for server requests and restrict it to the Gemini API.", 403);
+      if (reasons.some(reason => ["API_KEY_SERVICE_BLOCKED", "SERVICE_DISABLED"].includes(reason))) throw new SafeError("The Gemini API is not enabled or allowed for this Google key. Check the key's API restrictions and its Google project.", 403);
+      if (reasons.includes("BILLING_DISABLED")) throw new SafeError("Google requires billing for this request. Check billing for the key's Google project.", 402);
+      if (status === 401 || status === 403) throw new SafeError(`Your provider rejected this API key or model access. Check the key, permissions, and provider.${input.provider === "anthropic" ? " Claude keys must be scoped to a workspace." : ""}`, 401);
       if (status === 402) throw new SafeError("Your provider account needs credits. Check billing with your AI provider.", 402);
       if (status === 429) throw new SafeError("Your provider's rate or credit limit was reached. Wait a moment or check your provider's usage and billing.", 429);
       if (status === 400 || status === 404 || status === 422) throw new SafeError("Your provider could not use this model or request. Check the exact model ID and whether it supports text and JSON output, or shorten the material.", 400);
@@ -188,6 +215,6 @@ export async function runAI(input: AIRequest, fetcher: typeof fetch = fetch) {
   } catch (error) {
     if (error instanceof SafeError) throw error;
     if (controller.signal.aborted) throw new SafeError("The AI provider took too long to respond. Try a shorter source or a faster model.", 504);
-    throw new SafeError("Could not reach the AI provider. Please try again.", 502);
+    throw new SafeError("The AI provider returned an unreadable response. Please try again or select another model.", 502);
   } finally { clearTimeout(timeout); }
 }

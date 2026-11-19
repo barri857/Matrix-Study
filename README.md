@@ -2,6 +2,8 @@
 
 A responsive learning superapp inspired by Thea's study workflow, with a distinct Matrix identity.
 
+The canonical independent deployment is [Matrix](https://matrix-study.barri857.workers.dev). It runs in the owner's Cloudflare account and uses Matrix accounts, with no ChatGPT account or subscription requirement. See [INDEPENDENT.md](INDEPENDENT.md) for standalone build, migration, deployment, Google sign-in, and full workspace-transfer instructions. The unqualified commands below describe the retained legacy Sites build.
+
 ## Included
 - AI study kits from pasted notes, PDF, DOCX, text, captions, or a described topic
 - Six bring-your-own-key providers: OpenAI, Anthropic, Gemini, OpenRouter, Groq, and DeepSeek
