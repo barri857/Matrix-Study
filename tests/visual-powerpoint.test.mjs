@@ -22,9 +22,33 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 await mkdir(join(root, '.wrangler'), {recursive: true});
 const temporary = await mkdtemp(join(root, '.wrangler', 'pptx-visual-test-'));
 const output = join(temporary, 'content.mjs');
+const visualOutput = join(temporary, 'visual.mjs');
 await build({entryPoints: [join(root, 'lib/powerpoint-content.ts')], outfile: output, bundle: true, format: 'esm', platform: 'node', target: 'node24'});
+await build({entryPoints: [join(root, 'lib/visual-powerpoint.ts')], outfile: visualOutput, bundle: true, packages: 'external', format: 'esm', platform: 'node', target: 'node24'});
 const {powerPointSourceText, powerPointFeatureWarnings, resolvePowerPointPart, parsePowerPointXml} = await import(pathToFileURL(output));
-after(async () => {await unlink(output); await rmdir(temporary);});
+const {preparePowerPointImage} = await import(pathToFileURL(visualOutput));
+after(async () => {await Promise.all([unlink(output), unlink(visualOutput)]); await rmdir(temporary);});
+
+test('PPTX waits for color effects to replace the embedded image before capture', async () => {
+  let source = 'blob:embedded-image';
+  const decoded = [];
+  const image = {
+    getAttribute: () => source,
+    async decode() {
+      decoded.push(source);
+      if (decoded.length === 1) {
+        source = 'data:image/png;base64,recolored-image';
+        throw new Error('Image source changed during decode');
+      }
+    },
+  };
+  assert.equal(await preparePowerPointImage(image), undefined);
+  assert.deepEqual(decoded, ['blob:embedded-image', 'data:image/png;base64,recolored-image']);
+  assert.match(await preparePowerPointImage({
+    getAttribute: () => source,
+    async decode() { throw new Error('Invalid image'); },
+  }), /could not be decoded/);
+});
 
 test('PPTX visual model preserves embedded image, chart and shape/connector diagram in slide order', async () => {
   const bytes = await visualPowerPointFixture();

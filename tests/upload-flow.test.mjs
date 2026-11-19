@@ -38,6 +38,18 @@ function harness(analyze=async()=> 'Recognized diagram'){
   return{render(){cursor=0;return useMaterialUploads(options)},get value(){return source},notifications,cleanup(){cleanup.forEach(fn=>fn?.())}};
 }
 
+test('a missing browser reader leaves the draft intact and gives recovery steps', async () => {
+  const app = harness();
+  globalThis.readText = async () => {
+    throw new TypeError('Failed to fetch dynamically imported module: https://matrix.example/assets/lib-BJBn5UOf.js');
+  };
+  await app.render().add([new File(['Word content'], 'notes.docx')]);
+  assert.equal(app.value, 'My own notes');
+  assert.match(app.render().items[0].message, /refresh Matrix, and add the file again/);
+  assert.equal(app.render().items[0].status, 'error');
+  app.cleanup();
+});
+
 test('clearing during a pending text read ignores its late result and stops the remaining batch',async()=>{
   const app=harness();let release,reads=0;
   globalThis.readText=()=>{reads++;return new Promise(resolve=>{release=resolve})};

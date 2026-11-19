@@ -14,7 +14,7 @@
     "db:generate": "drizzle-kit generate",
     "build:independent": "vite build --config vite.independent.config.ts && node scripts/independent-security-assets.mjs",
     "dev:independent": "wrangler dev --config independent/wrangler.json --port 8787",
-    "deploy:independent": "npm run build:independent && wrangler deploy --config independent/wrangler.json",
+    "deploy:independent": "npm run build:independent && node scripts/retain-independent-assets.mjs && wrangler deploy --config independent/wrangler.json",
     "db:independent": "wrangler d1 migrations apply matrix-study --config independent/wrangler.json --remote"
   },
   "dependencies": {

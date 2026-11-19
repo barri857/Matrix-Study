@@ -11,6 +11,10 @@ export const independentSecurityHeaders = `/*
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+/asset-releases.json
+  Cache-Control: no-store
 `;
 
 export async function writeIndependentSecurityHeaders() {

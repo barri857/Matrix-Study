@@ -10,6 +10,14 @@ export type UploadEntry={id:string;file:File;visual:boolean;status:'ready'|'read
 type Options={value:string;onChange:(value:string)=>void;onTitle:(title:string)=>void;onBusy:(message:string)=>void;notify:(message:string,error?:boolean)=>void;canAnalyze:boolean;onConnect:()=>void;analyze:(page:VisualPage,signal:AbortSignal)=>Promise<string>};
 const visualExtensions=new Set(['pdf','pptx','jpg','jpeg','png','webp','gif','bmp']);
 
+function readingError(error:unknown,fallback:string){
+  if(!(error instanceof Error))return fallback;
+  if(/failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|unable to preload css/i.test(error.message)){
+    return 'The file reader could not load. Copy any text you want to keep, refresh Matrix, and add the file again.';
+  }
+  return error.message;
+}
+
 export function useMaterialUploads(options:Options){
   const {t}=useLanguage(uploadTranslations);
   const translateRef=useRef(t);translateRef.current=t;
@@ -50,7 +58,7 @@ export function useMaterialUploads(options:Options){
           optionsRef.current.onTitle(file.name.replace(/\.[^.]+$/,'').slice(0,160));
         }catch(error){
           const stopped=controller.signal.aborted;
-          patch(id,{status:stopped?'stopped':'error',message:stopped?'Stopped before text was added. Remove this file and add it again.':error instanceof Error?error.message:'This file could not be read.'});
+          patch(id,{status:stopped?'stopped':'error',message:stopped?'Stopped before text was added. Remove this file and add it again.':readingError(error,'This file could not be read.')});
           if(stopped)break;
         }
       }
@@ -94,7 +102,7 @@ export function useMaterialUploads(options:Options){
           if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:'done',message:isPowerPoint?'Visual reading complete · slides: {count}':'Visual reading complete · pages/images: {count}',messageValues:{count:pageNumber}});
         }catch(error){
           const stopped=controller.signal.aborted;
-          if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:stopped?'stopped':'error',message:stopped?'Stopped. Read again to continue from the next unread page.':error instanceof Error?error.message:'Visual reading failed. Try again.'});
+          if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:stopped?'stopped':'error',message:stopped?'Stopped. Read again to continue from the next unread page.':readingError(error,'Visual reading failed. Try again.')});
           // A provider/format/size error requires a decision before any more paid requests.
           break;
         }

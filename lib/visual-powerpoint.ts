@@ -82,6 +82,28 @@ function validatePackageXml(files: PptxFiles) {
   }
 }
 
+export async function preparePowerPointImage(image: HTMLImageElement): Promise<string | undefined> {
+  let source = image.getAttribute('src');
+  while (source) {
+    if (!/^(blob:|data:)/i.test(source)) {
+      image.removeAttribute('src');
+      return 'An external image was blocked.';
+    }
+    try {
+      await image.decode();
+    } catch {
+      if (source === image.getAttribute('src')) {
+        return 'An image on this slide could not be decoded. Export to PDF to preserve it.';
+      }
+    }
+    // The renderer can replace an image with its color-adjusted version on load.
+    // Decode may reject when that happens, so wait for the replacement as well.
+    const current = image.getAttribute('src');
+    if (current === source) return;
+    source = current;
+  }
+}
+
 function encodeJpeg(canvas: HTMLCanvasElement): {data: string; width: number; height: number} {
   let current = canvas;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -198,11 +220,10 @@ export async function* renderPowerPointVisuals(file: File, options: {signal?: Ab
           chart.resize({silent: true, animation: {duration: 0}});
           chart.getZr().flush();
         }
-        await bounded(Promise.all(Array.from(handle.element.querySelectorAll('img')).map(async image => {
-          if (image.src && !/^(blob:|data:)/i.test(image.src)) { image.removeAttribute('src'); warnings.push('An external image was blocked.'); return; }
-          try { await image.decode(); }
-          catch { warnings.push('An image on this slide could not be decoded. Export to PDF to preserve it.'); }
-        })), signal);
+        const imageWarnings = await bounded(Promise.all(
+          Array.from(handle.element.querySelectorAll('img'), preparePowerPointImage),
+        ), signal);
+        for (const warning of imageWarnings) if (warning) warnings.push(warning);
         // No document-supplied hyperlink should survive into the capture DOM.
         for (const link of handle.element.querySelectorAll('a')) link.removeAttribute('href');
         // EOT fonts are loaded as FontFace objects, which foreignObject captures cannot embed.
