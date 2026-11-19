@@ -2,6 +2,9 @@ export type Task = { id: string; title: string; date: string; subject: string; d
 export type Note = { id: string; title: string; body: string; subject: string; updatedAt: number };
 export type Bookmark = { id: string; title: string; url: string; subject: string };
 export type Exam = { date: string; time: string; weight: number; notes: string };
+export const examTypes = ['Midterm', 'Endterm', 'Final', 'Custom'] as const;
+export type ExamType = typeof examTypes[number];
+export type CourseExams = { Midterm: Exam; Endterm: Exam; Final: Exam; Custom: Exam & { title: string } };
 export type Assessment = { id: string; title: string; score: number; weight: number };
 export type Workspace = {
   version: 1;
@@ -9,10 +12,19 @@ export type Workspace = {
   tasks: Task[];
   notes: Note[];
   bookmarks: Bookmark[];
-  courses: Record<string, { Endterm: Exam; Final: Exam }>;
+  courses: Record<string, CourseExams>;
   grades: Assessment[];
 };
 export const emptyExam = (): Exam => ({ date: '', time: '', weight: 0, notes: '' });
+export const emptyCourseExams = (): CourseExams => ({ Midterm: emptyExam(), Endterm: emptyExam(), Final: emptyExam(), Custom: { ...emptyExam(), title: '' } });
+/** Editing one exam never replaces another exam's date, notes, or custom title. */
+export function updateCourseExam(course: CourseExams | undefined, type: ExamType, patch: Partial<Exam> & { title?: string }): CourseExams {
+  const exams = { ...emptyCourseExams(), ...course };
+  const { title, ...fields } = patch;
+  if (type === 'Custom') exams.Custom = { ...exams.Custom, ...fields, ...(title !== undefined ? { title } : {}) };
+  else exams[type] = { ...exams[type], ...fields };
+  return exams;
+}
 export const emptyWorkspace = (): Workspace => ({ version: 1, updatedAt: 0, tasks: [], notes: [], bookmarks: [], courses: {}, grades: [] });
 const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const string = (v: unknown, max = 300) => typeof v === 'string' ? v.slice(0, max) : '';
@@ -37,8 +49,8 @@ export function readWorkspace(value: unknown): Workspace {
   for (const [subject, value] of Object.entries(object(raw.courses)).slice(0, 100)) {
     if (['__proto__', 'prototype', 'constructor'].includes(subject)) continue;
     const course = object(value);
-    const exam = (v: unknown): Exam => { const e = object(v); return { date: date(e.date), time: /^\d{2}:\d{2}$/.test(string(e.time, 5)) ? string(e.time, 5) : '', weight: num(e.weight, 100), notes: string(e.notes, 10000) }; };
-    result.courses[subject.slice(0, 100)] = { Endterm: exam(course.Endterm), Final: exam(course.Final) };
+    const exam = (v: unknown): Exam => { const e = object(v); return { date: date(e.date), time: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(string(e.time, 5)) ? string(e.time, 5) : '', weight: num(e.weight, 100), notes: string(e.notes, 10000) }; };
+    result.courses[subject.slice(0, 100)] = { Midterm: exam(course.Midterm), Endterm: exam(course.Endterm), Final: exam(course.Final), Custom: { ...exam(course.Custom), title: string(object(course.Custom).title, 160) } };
   }
   result.grades = array(raw.grades, 100).map(v => { const g = object(v); return { id: id(g.id), title: string(g.title), score: num(g.score, 100), weight: num(g.weight, 100) }; }).filter(v => v.id);
   return result;

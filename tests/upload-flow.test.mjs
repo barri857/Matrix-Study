@@ -1,0 +1,84 @@
+import test, {after} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdir,mkdtemp,unlink,rmdir} from 'node:fs/promises';
+import {join,resolve} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {build} from 'esbuild';
+
+const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
+await mkdir(join(root,'.wrangler'),{recursive:true});
+const temporary=await mkdtemp(join(root,'.wrangler','upload-test-'));
+const output=join(temporary,'upload.mjs');
+await build({entryPoints:[join(root,'app/use-material-upload.ts')],outfile:output,bundle:true,platform:'node',format:'esm',target:'node24',plugins:[{
+  name:'isolated-upload-io',setup(build){
+    build.onResolve({filter:/^(react|\.\.\/lib\/(files|i18n|visual-documents|visual-powerpoint))$/},args=>({path:args.path,namespace:'fixture'}));
+    build.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:args.path==='react'?
+      'export const useState=(value)=>globalThis.hooks.state(value);export const useRef=(value)=>globalThis.hooks.ref(value);export const useEffect=(fn)=>globalThis.hooks.effect(fn);':
+      args.path.endsWith('/files')?'export const MAX_STUDY_FILE_BYTES=12582912;export const readStudyFile=(file)=>globalThis.readText(file);':
+      args.path.endsWith('/i18n')?'export const useLanguage=()=>({t:(text,values)=>text.replace(/\\{(\\w+)\\}/g,(match,key)=>values?.[key]??match)});':
+      'export const renderVisualDocument=(file,options)=>globalThis.visualPages(file,options);export const renderPowerPointVisuals=renderVisualDocument;',loader:'js'}));
+  },
+}]});
+const {useMaterialUploads}=await import(pathToFileURL(output));
+const provenance=join(temporary,'provenance.mjs');
+await build({entryPoints:[join(root,'lib/upload-content.ts')],outfile:provenance,bundle:true,platform:'node',format:'esm'});
+const {appendImportedBlock,removeImportedBlocks}=await import(pathToFileURL(provenance));
+after(async()=>{await unlink(output);await unlink(provenance);await rmdir(temporary)});
+
+function harness(analyze=async()=> 'Recognized diagram'){
+  let cursor=0;const state=[],cleanup=[],notifications=[];let source='My own notes';
+  globalThis.hooks={
+    state(value){const slot=cursor++;if(!(slot in state))state[slot]=value;return[state[slot],next=>{state[slot]=typeof next==='function'?next(state[slot]):next}]},
+    ref(value){const slot=cursor++;if(!(slot in state))state[slot]={current:value};return state[slot]},
+    effect(fn){const slot=cursor++;if(!(slot in state)){state[slot]=true;cleanup.push(fn())}},
+  };
+  globalThis.readText=file=>file.text();
+  globalThis.visualPages=async function*(file,{signal}){for(let number=1;number<=2;number++){if(signal.aborted)throw new DOMException('Stopped','AbortError');yield{data:'aGVsbG8=',mimeType:'image/png',label:`${file.name} page ${number}`,text:'',width:10,height:10}}};
+  const options={get value(){return source},onChange(value){source=value},onTitle(){},onBusy(){},notify(message,error){notifications.push({message,error})},canAnalyze:true,onConnect(){},analyze};
+  return{render(){cursor=0;return useMaterialUploads(options)},get value(){return source},notifications,cleanup(){cleanup.forEach(fn=>fn?.())}};
+}
+
+test('clearing during a pending text read ignores its late result and stops the remaining batch',async()=>{
+  const app=harness();let release,reads=0;
+  globalThis.readText=()=>{reads++;return new Promise(resolve=>{release=resolve})};
+  const model=app.render();const adding=model.add([new File(['first'],'first.md'),new File(['second'],'second.txt')]);
+  assert.equal(app.render().items.length,1);
+  app.render().clear();release('Late extracted text');await adding;
+  assert.equal(reads,1);assert.equal(app.value,'My own notes');assert.equal(app.render().items.length,0);assert.equal(app.render().running,false);
+  app.cleanup();
+});
+
+test('stopping text import keeps a removable stopped row without adding its text',async()=>{
+  const app=harness();let release;
+  globalThis.readText=()=>new Promise(resolve=>{release=resolve});
+  const adding=app.render().add([new File(['notes'],'notes.md')]);app.render().stop();release('Late notes');await adding;
+  const stopped=app.render();assert.equal(stopped.items[0].status,'stopped');assert.equal(app.value,'My own notes');
+  assert.equal((await stopped.read()).complete,false);
+  stopped.remove(stopped.items[0].id);assert.equal(app.render().items.length,0);app.cleanup();
+});
+
+test('provider failure stops the batch and retry skips pages whose content was already imported',async()=>{
+  let requests=0;const app=harness(async page=>{requests++;if(requests===2)throw new Error('Quota exceeded');return `Read ${page.label}`});
+  await app.render().add([new File(['pdf'],'lecture.pdf'),new File(['pdf'],'next.pdf')]);
+  const first=await app.render().read();assert.equal(first.complete,false);assert.equal(requests,2);
+  const rows=app.render().items;assert.equal(rows[0].pagesRead,1);assert.equal(rows[0].status,'error');assert.equal(rows[1].status,'ready');
+  await app.render().read([rows[0].id]);assert.equal(requests,3);assert.equal(app.render().items[0].status,'done');
+  assert.equal(app.value.match(/Read lecture.pdf page 1/g)?.length,1);assert.equal(app.value.match(/Read lecture.pdf page 2/g)?.length,1);
+  app.cleanup();
+});
+
+test('removing an attachment removes its unchanged imported blocks and preserves other notes',()=>{
+  const first=appendImportedBlock('My own notes','first.md','First imported notes');
+  const second=appendImportedBlock(first.value,'second.md','Second imported notes');
+  const removed=removeImportedBlocks(second.value,[first.block]);
+  assert.equal(removed.edited,false);assert.equal(removed.value,'My own notes\n\n[Source: second.md]\nSecond imported notes');
+  const edited=second.value.replace('First imported notes','My revised first notes');
+  assert.deepEqual(removeImportedBlocks(edited,[first.block]),{value:edited,edited:true});
+});
+
+test('source labels cannot inject lines, and an oversized append preserves the original value',()=>{
+  const source='Existing content';
+  assert.match(appendImportedBlock(source,'lecture\n[fake source]\u0000.md',' content ').value,/\[Source: lecture \[fake source\] .md\]\ncontent$/);
+  assert.throws(()=>appendImportedBlock(source,'big.md','x'.repeat(200),40),/120,000-character/);
+  assert.equal(source,'Existing content');
+});

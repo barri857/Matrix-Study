@@ -78,3 +78,8 @@
 /* Keep dark accent fills visible without changing the selected color. */
 .nav-item.active{border-color:var(--accent-outline)}
 .check-row input:checked{box-shadow:0 0 0 1px var(--accent-outline);border-radius:2px}
+
+.custom-timer{display:flex;align-items:end;justify-content:center;gap:12px;flex-wrap:wrap;padding:18px 0}.custom-timer .field{margin:0;max-width:220px}.custom-timer .tiny{max-width:230px;text-align:left}.focus-panel>.tabs{flex-wrap:wrap}.top-actions{min-width:0}@media(max-width:600px){.custom-timer{align-items:stretch}.custom-timer .tiny{max-width:100%;text-align:center}.topbar .breadcrumb>span,.topbar .breadcrumb>svg{display:none}.topbar{gap:8px}.topbar .top-actions{gap:7px}}
+
+.tutor-connection{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0}.notice.error{border-color:var(--danger,#e48c8c)}
+.topbar .breadcrumb{min-width:0;flex:1}.topbar .breadcrumb strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar .sidebar-toggle{flex-shrink:0}

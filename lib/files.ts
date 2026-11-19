@@ -1,7 +1,7 @@
 export const MAX_STUDY_FILE_BYTES = 12 * 1024 * 1024;
 export const MAX_STUDY_CHARACTERS = 120000;
 export const MAX_STUDY_BATCH_FILES = 20;
-export const STUDY_FILE_ACCEPT = '.pdf,.docx,.pptx,.txt,.md,.csv,.srt,.vtt';
+export const STUDY_FILE_ACCEPT = '.jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.pptx,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.log,.tex,.html,.htm,.srt,.vtt';
 function checkedText(text: string): string {
   if (text.length > MAX_STUDY_CHARACTERS) throw new Error('This document is too long. Split it into smaller files (120,000 characters maximum).');
   if (!text.trim()) throw new Error('No readable text was found in this file.');
@@ -25,8 +25,9 @@ export async function readStudyFile(file: File): Promise<string> {
     return text;
   }
   if(ext==='docx') {const mammoth=await import('mammoth'); return checkedText((await mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()})).value);}
-  if(['txt','md','csv','srt','vtt'].includes(ext||''))return checkedText(await file.text());
-  throw new Error('Choose PDF, DOCX, PPTX, TXT, Markdown, CSV, SRT or VTT.');
+  if(['html','htm'].includes(ext||'')){const document=new DOMParser().parseFromString(await file.text(),'text/html');document.querySelectorAll('script,style,template,noscript').forEach(node=>node.remove());return checkedText(document.body.textContent||'');}
+  if(['txt','md','markdown','csv','json','yaml','yml','log','tex','srt','vtt'].includes(ext||''))return checkedText(await file.text());
+  throw new Error('This file format is not supported yet. Use an image, PDF, DOCX, PPTX, Markdown, text, CSV, JSON, HTML or captions.');
 }
 export type StudyFileResult = { name: string; status: 'added' | 'error'; characters?: number; message?: string };
 export type StudyBatchProgress = { index: number; total: number; name: string; results: StudyFileResult[] };

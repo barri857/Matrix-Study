@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {aiRequestSchema,runAI,SafeError} from '../lib/ai';
+import {aiRequestSchema,runAI,SafeError,MAX_AI_REQUEST_BYTES} from '../lib/ai';
 import {body,errorResponse,idSchema,json,kitSchema,sameOrigin} from '../app/api/_shared';
 import {createAuth,getAuthConfig,getUser,type AuthEnv} from './auth';
 import {workspaceSchema} from './workspace-schema';
@@ -23,7 +23,7 @@ async function api(request:Request,env:Env):Promise<Response>{
   if(!methods[path])return json({error:'This page could not be found.'},404);
   if(!methods[path].includes(request.method))return json({error:'This action is not supported.'},405);
   if(path==='/api/account-config')return json(getAuthConfig(env));
-  if(path==='/api/ai')return json(await runAI(aiRequestSchema.parse(await body(request,600000))));
+  if(path==='/api/ai')return json(await runAI(aiRequestSchema.parse(await body(request,MAX_AI_REQUEST_BYTES))));
   if(path==='/api/share'&&request.method==='GET'){
     const id=z.string().uuid().parse(url.searchParams.get('id'));
     const row=await env.DB.prepare('SELECT data FROM kits WHERE share_id=?').bind(id).first<{data:string}>();

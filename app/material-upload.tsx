@@ -1,57 +1,32 @@
 'use client';
-import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { CheckCircle2, FileWarning, LoaderCircle, Upload } from 'lucide-react';
-import { readStudyFiles, STUDY_FILE_ACCEPT, type StudyFileResult } from '../lib/files';
+import {useRef,useState,type DragEvent} from 'react';
+import {CheckCircle2,FileWarning,FileText,LoaderCircle,ScanEye,Upload,X} from 'lucide-react';
+import {STUDY_FILE_ACCEPT} from '../lib/files';
+import type {MaterialUploads} from './use-material-upload';
+import {useLanguage} from '../lib/i18n';
+import {uploadTranslations} from '../lib/upload-translations';
 import './material-upload.css';
 
-type Props = { value: string; onChange: (text: string) => void; onTitle: (title: string) => void; onBusy: (busy: boolean) => void; notify: (message: string, error?: boolean) => void; disabled: boolean };
-export default function MaterialUpload({ value, onChange, onTitle, onBusy, notify, disabled }: Props) {
-  const input = useRef<HTMLInputElement>(null), reading = useRef(false), mounted = useRef(true), depth = useRef(0);
-  const [dragging, setDragging] = useState(false), [current, setCurrent] = useState(''), [summary, setSummary] = useState('');
-  const [results, setResults] = useState<StudyFileResult[]>([]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  async function addFiles(files: File[]) {
-    if (!files.length || disabled || reading.current) return;
-    reading.current = true;
-    setResults([]); setSummary(''); setDragging(false); depth.current = 0; onBusy(true);
-    try {
-      const batch = await readStudyFiles(files, value, progress => {
-        if (mounted.current) { setCurrent(`Reading ${progress.index + 1} of ${progress.total}: ${progress.name}`); setResults(progress.results); }
-      });
-      if (!mounted.current) return;
-      const added = batch.results.filter(result => result.status === 'added').length, skipped = batch.results.length - added;
-      setResults(batch.results);
-      if (added) { onChange(batch.text); onTitle(batch.title); }
-      const message = `${added} file${added === 1 ? '' : 's'} added${skipped ? `; ${skipped} could not be added. See details below.` : '. Review the extracted text below.'}`;
-      setSummary(message); notify(message, skipped > 0);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'These files could not be read.';
-      if (mounted.current) { setSummary(message); notify(message, true); }
-    } finally {
-      reading.current = false;
-      if (mounted.current) setCurrent('');
-      if (input.current) input.current.value = '';
-      onBusy(false);
-    }
-  }
-  function fileDrag(event: DragEvent) { return Array.from(event.dataTransfer.types).includes('Files'); }
-  return <div className="material-upload" aria-busy={Boolean(current)}
-    onDragEnter={event => { if (!fileDrag(event)) return; event.preventDefault(); event.stopPropagation(); if (!disabled && !reading.current) { depth.current++; setDragging(true); } }}
-    onDragOver={event => { if (!fileDrag(event)) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = disabled || reading.current ? 'none' : 'copy'; }}
-    onDragLeave={event => { if (!fileDrag(event)) return; event.preventDefault(); event.stopPropagation(); depth.current = Math.max(0, depth.current - 1); if (!depth.current) setDragging(false); }}
-    onDrop={event => { if (!fileDrag(event)) return; event.preventDefault(); event.stopPropagation(); depth.current = 0; setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); }}>
-    <input ref={input} type="file" multiple hidden accept={STUDY_FILE_ACCEPT} onChange={event => void addFiles(Array.from(event.target.files || []))} />
-    <button type="button" className={`upload-zone${dragging ? ' is-dragging' : ''}${current ? ' is-reading' : ''}`} disabled={disabled || Boolean(current)} onClick={() => input.current?.click()}>
-      {current ? <LoaderCircle size={28} className="material-spinner" /> : <Upload size={28} />}
-      <strong>{current ? 'Reading your documents…' : dragging ? 'Drop your files here' : 'Drop files here, or click to choose'}</strong>
-      <span>PDF, Word, PowerPoint, text & captions</span>
-      <span>Up to 20 files · 12 MB each · 120,000 characters combined</span>
-    </button>
-    <p className="material-upload-note muted tiny">Files are read on your device. PowerPoint imports slide text; images, diagrams and speaker notes are not read.</p>
-    <p className="material-upload-status tiny" role="status" aria-live="polite">{current || summary}</p>
-    {results.length > 0 && <ul className="material-upload-results" aria-label="File reading results">{results.map((result, index) => <li key={`${index}:${result.name}`} className={result.status}>
-      {result.status === 'added' ? <CheckCircle2 size={17} aria-hidden="true" /> : <FileWarning size={17} aria-hidden="true" />}
-      <div><strong>{result.name}</strong><span>{result.status === 'added' ? `Added · ${result.characters?.toLocaleString()} characters` : result.message}</span></div>
-    </li>)}</ul>}
-  </div>;
+export default function MaterialUpload({model,disabled}:{model:MaterialUploads;disabled:boolean}){
+ const {t}=useLanguage(uploadTranslations);
+ const input=useRef<HTMLInputElement>(null),depth=useRef(0);const[dragging,setDragging]=useState(false);
+ const locked=disabled&&!model.running;
+ const isFile=(event:DragEvent)=>Array.from(event.dataTransfer.types).includes('Files');
+ return <div className="material-upload" aria-busy={model.running}
+ onDragEnter={event=>{if(!isFile(event))return;event.preventDefault();event.stopPropagation();if(!disabled){depth.current++;setDragging(true)}}}
+ onDragOver={event=>{if(!isFile(event))return;event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=disabled?'none':'copy'}}
+ onDragLeave={event=>{if(!isFile(event))return;event.preventDefault();event.stopPropagation();depth.current=Math.max(0,depth.current-1);if(!depth.current)setDragging(false)}}
+ onDrop={event=>{if(!isFile(event))return;event.preventDefault();event.stopPropagation();depth.current=0;setDragging(false);if(!disabled)void model.add(Array.from(event.dataTransfer.files))}}>
+ <input ref={input} type="file" multiple hidden accept={STUDY_FILE_ACCEPT} onChange={event=>{const files=Array.from(event.target.files||[]);event.target.value='';void model.add(files)}}/>
+ <button type="button" className={`upload-zone ${dragging?'is-dragging':''}`} disabled={disabled||model.running} onClick={()=>input.current?.click()}><Upload size={28}/><strong>{t(dragging?'Drop your files here':'Drop files here, or click to choose')}</strong><span>{t('Images, PDF, Word, PowerPoint, Markdown & text')}</span><span>{t('Up to 20 files · 12 MB each · 120,000 characters per kit')}</span></button>
+ <p className="material-upload-note muted tiny">{t('PDF pages, PowerPoint slides, and photos are read visually by your selected AI. This includes readable text, diagrams, charts, and scanned pages. Visual reading uses your provider’s API allowance.')}</p>
+ {model.items.length>0&&<div className="material-upload-actions"><span className="tiny muted">{t('Files: {count}',{count:model.items.length})}</span><div>{model.running?<button className="button secondary small" onClick={model.stop}>{t('Stop reading')}</button>:model.pending&&<button className="button secondary small" disabled={locked} onClick={()=>model.canAnalyze?void model.read():model.connect()}><ScanEye size={16}/>{t(model.canAnalyze?'Read visuals with AI':'Connect AI to read visuals')}</button>}<button className="button ghost small" disabled={locked} onClick={model.clear}>{t('Clear all')}</button></div></div>}
+ <p className="material-upload-status tiny" role="status" aria-live="polite">{model.progress}</p>
+ {model.items.length>0&&<ul className="material-upload-results" aria-label={t('Attached files')}>{model.items.map(item=><li key={item.id} className={item.status}>
+ {item.preview?<img src={item.preview} alt="" className="material-thumbnail"/>:item.status==='reading'?<LoaderCircle size={20} className="material-spinner"/>:item.status==='done'?<CheckCircle2 size={20}/>:item.status==='error'?<FileWarning size={20}/>:<FileText size={20}/>}
+ <div><strong>{item.file.name}</strong><span>{t(item.message,item.messageValues)}</span>{item.warnings.map(warning=><span className="material-warning" key={warning}>{t(warning)}</span>)}{item.visual&&['error','stopped'].includes(item.status)&&<button className="material-retry" disabled={disabled||model.running} onClick={()=>void model.read([item.id])}>{t('Retry visual reading')}</button>}</div>
+ <button type="button" className="icon-button material-remove" disabled={locked} aria-label={t('Remove {filename}',{filename:item.file.name})} title={t('Remove file')} onClick={()=>model.remove(item.id)}><X size={18}/></button>
+ </li>)}</ul>}
+ {model.pending&&<p className="tiny muted">{t('Generate reads any pending visuals first. You can stop and resume without rereading completed pages. Keep this tab open until reading finishes.')}</p>}
+ </div>;
 }

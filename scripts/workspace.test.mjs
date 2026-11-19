@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyWorkspace, readWorkspace, gradeSummary, hasWorkspaceContent, mergeGuestWorkspace, pendingWorkspaceBody, safeBookmarkUrl } from '../lib/workspace.ts';
+import { emptyWorkspace, emptyExam, emptyCourseExams, readWorkspace, updateCourseExam, gradeSummary, hasWorkspaceContent, mergeGuestWorkspace, pendingWorkspaceBody, safeBookmarkUrl } from '../lib/workspace.ts';
 
 test('bookmarks accept only credential-free HTTPS URLs', () => {
   assert.equal(safeBookmarkUrl('https://example.com/lecture?q=cell'), 'https://example.com/lecture?q=cell');
@@ -22,6 +22,41 @@ test('workspace reader blocks prototype keys in course records', () => {
   assert.equal(Object.hasOwn(result.courses, '__proto__'), false);
   assert.equal(result.courses.Physics.Final.weight, 40);
   assert.equal(result.courses.Physics.Endterm.date, '');
+});
+
+test('legacy exam plans retain Endterm and Final dates while new exam types start empty', () => {
+  const old = { ...emptyWorkspace(), courses: { Algorithms: { Endterm: { ...emptyExam(), date: '2026-11-25', weight: 30 }, Final: { ...emptyExam(), date: '2026-12-12', time: '09:30', notes: 'Chapters 1–10' } } } };
+  const restored = readWorkspace(old).courses.Algorithms;
+  assert.deepEqual(restored.Endterm, old.courses.Algorithms.Endterm);
+  assert.deepEqual(restored.Final, old.courses.Algorithms.Final);
+  assert.deepEqual(restored.Midterm, emptyExam());
+  assert.deepEqual(restored.Custom, { ...emptyExam(), title: '' });
+});
+
+test('editing exam types keeps independent dates and the custom title across serialization', () => {
+  const original = emptyCourseExams();
+  let plans = updateCourseExam(original, 'Endterm', { date: '2026-11-25', notes: 'Graphs' });
+  plans = updateCourseExam(plans, 'Final', { date: '2026-12-12', weight: 40 });
+  plans = updateCourseExam(plans, 'Midterm', { date: '2026-10-15', time: '10:30' });
+  plans = updateCourseExam(plans, 'Custom', { title: 'Algorithm lab defense', date: '2026-11-22', notes: 'Bring code' });
+  plans = updateCourseExam(plans, 'Midterm', { time: '11:00' });
+  assert.equal(original.Endterm.date, '');
+  const restored = readWorkspace(JSON.parse(JSON.stringify({ ...emptyWorkspace(), courses: { Algorithms: plans } }))).courses.Algorithms;
+  assert.equal(restored.Endterm.date, '2026-11-25');
+  assert.equal(restored.Final.date, '2026-12-12');
+  assert.equal(restored.Midterm.date, '2026-10-15');
+  assert.equal(restored.Midterm.time, '11:00');
+  assert.equal(restored.Custom.date, '2026-11-22');
+  assert.equal(restored.Custom.title, 'Algorithm lab defense');
+  assert.equal(restored.Custom.notes, 'Bring code');
+});
+
+test('new exam fields are sanitized with the same limits as existing plans', () => {
+  const plans = { ...emptyCourseExams(), Midterm: { ...emptyExam(), time: '99:99' }, Custom: { ...emptyExam(), title: 'x'.repeat(200), secret: 'excluded' } };
+  const restored = readWorkspace({ courses: { Algorithms: plans } }).courses.Algorithms;
+  assert.equal(restored.Midterm.time, '');
+  assert.equal(restored.Custom.title.length, 160);
+  assert.equal(Object.hasOwn(restored.Custom, 'secret'), false);
 });
 
 test('weighted calculation distinguishes partial average from course points', () => {

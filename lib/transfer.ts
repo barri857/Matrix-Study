@@ -10,6 +10,8 @@ const subject = z.string().max(100);
 const date = z.string().regex(/^(?:\d{4}-\d{2}-\d{2})?$/);
 const percentage = z.number().finite().min(0).max(100);
 const exam = z.object({ date, time: z.string().regex(/^(?:(?:[01]\d|2[0-3]):[0-5]\d)?$/), weight: percentage, notes: z.string().max(10000) });
+const blankExam = { date: '', time: '', weight: 0, notes: '' };
+const courseExams = z.object({ Midterm: exam.default(blankExam), Endterm: exam, Final: exam, Custom: exam.extend({ title: z.string().max(160).default('') }).default({ ...blankExam, title: '' }) });
 const workspaceSchema = z.object({
   version: z.literal(1), updatedAt: timestamp,
   tasks: z.array(z.object({ id: safeId, title: label, date, subject, done: z.boolean() })).max(500),
@@ -17,7 +19,7 @@ const workspaceSchema = z.object({
   bookmarks: z.array(z.object({ id: safeId, title: label, subject, url: z.string().max(4000).url().refine(value => {
     const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password;
   }) })).max(300),
-  courses: z.record(z.string().max(100).refine(value => !['__proto__', 'constructor', 'prototype'].includes(value)), z.object({ Endterm: exam, Final: exam })).refine(value => Object.keys(value).length <= 100),
+  courses: z.record(z.string().max(100).refine(value => !['__proto__', 'constructor', 'prototype'].includes(value)), courseExams).refine(value => Object.keys(value).length <= 100),
   grades: z.array(z.object({ id: safeId, title: label, score: percentage, weight: percentage })).max(100),
 });
 

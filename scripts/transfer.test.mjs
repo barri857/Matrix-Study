@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { demoKits } from '../lib/study.ts';
-import { emptyWorkspace } from '../lib/workspace.ts';
+import { emptyWorkspace, emptyCourseExams } from '../lib/workspace.ts';
 
 const result = await build({ entryPoints: [fileURLToPath(new URL('../lib/transfer.ts', import.meta.url))], bundle: true, platform: 'node', format: 'esm', write: false });
 const { createTransferBundle, parseTransferBundle, planTransferImport } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
@@ -68,4 +68,38 @@ test('transfers retain learning progress and refuse over-capacity merges', () =>
   assert.equal(plan.kits[0].history[0].score, 4);
   const full = Array.from({ length: 100 }, (_, i) => ({ ...demoKits[1], id: `existing-${i}` }));
   assert.throws(() => planTransferImport(full, emptyWorkspace(), bundle, {}, () => 'new-kit', 20), /100-kit/);
+});
+
+test('workspace transfers preserve all four exam types and migrate older exports', () => {
+  const courses = { Algorithms: {
+    Midterm: { ...exam, date: '2026-10-15' }, Endterm: { ...exam, date: '2026-11-25' }, Final: { ...exam, date: '2026-12-12' },
+    Custom: { ...exam, title: 'Lab defense', date: '2026-11-22', notes: 'Prepare the demo' },
+  } };
+  const bundle = createTransferBundle([], { ...emptyWorkspace(), courses }, 10);
+  const restored = parseTransferBundle(JSON.stringify(bundle));
+  assert.deepEqual(restored.workspace.courses, courses);
+  const imported = planTransferImport([], emptyWorkspace(), restored, {}, () => 'new-id', 20);
+  assert.deepEqual(imported.workspace.courses.Algorithms, courses.Algorithms);
+  const old = { ...bundle, workspace: { ...emptyWorkspace(), courses: { Algorithms: { Endterm: courses.Algorithms.Endterm, Final: courses.Algorithms.Final } } } };
+  const migrated = parseTransferBundle(JSON.stringify(old)).workspace.courses.Algorithms;
+  assert.deepEqual(migrated.Midterm, exam);
+  assert.deepEqual(migrated.Custom, { ...exam, title: '' });
+  assert.equal(migrated.Final.date, '2026-12-12');
+  assert.throws(() => createTransferBundle([], { ...emptyWorkspace(), courses: { Algorithms: { ...emptyCourseExams(), Custom: { ...exam, title: 'x'.repeat(161) } } } }, 10), /invalid/);
+});
+
+test('cloud schema accepts older exam records and retains validated custom details', async () => {
+  const compiled = await build({ entryPoints: [fileURLToPath(new URL('../independent/workspace-schema.ts', import.meta.url))], bundle: true, platform: 'node', format: 'esm', write: false });
+  const { workspaceSchema } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+  const old = workspaceSchema.parse({ ...emptyWorkspace(), courses: { Algorithms: { Endterm: { ...exam, date: '2026-11-25' }, Final: exam } } });
+  assert.equal(old.courses.Algorithms.Endterm.date, '2026-11-25');
+  assert.equal(old.courses.Algorithms.Midterm.date, '');
+  assert.equal(old.courses.Algorithms.Custom.title, '');
+  const plan = { ...emptyCourseExams(), Midterm: { ...exam, date: '2026-10-15' }, Custom: { ...exam, title: 'Lab defense', date: '2026-11-22', unknown: 'discarded' } };
+  const saved = workspaceSchema.parse({ ...emptyWorkspace(), courses: { Algorithms: plan } });
+  assert.equal(saved.courses.Algorithms.Custom.title, 'Lab defense');
+  assert.equal(saved.courses.Algorithms.Custom.date, '2026-11-22');
+  assert.equal(Object.hasOwn(saved.courses.Algorithms.Custom, 'unknown'), false);
+  assert.equal(workspaceSchema.safeParse({ ...saved, courses: { Algorithms: { ...plan, Midterm: { ...exam, time: '25:00' } } } }).success, false);
+  assert.equal(workspaceSchema.safeParse({ ...saved, courses: { Algorithms: { ...plan, Custom: { ...exam, title: 'x'.repeat(161) } } } }).success, false);
 });

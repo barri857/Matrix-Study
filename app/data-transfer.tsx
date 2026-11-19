@@ -5,6 +5,8 @@ import { Download, Upload, FolderCheck } from 'lucide-react';
 import type { Kit } from '@/lib/study';
 import { emptyWorkspace, type Workspace } from '@/lib/workspace';
 import { createTransferBundle, parseTransferBundle, planTransferImport, safeTransferWorkspace, transferCounts, TRANSFER_MAX_BYTES, type TransferBundle } from '@/lib/transfer';
+import { useLanguage } from '@/lib/i18n';
+import { transferTranslations } from '@/lib/transfer-translations';
 
 type Props = {
   kits: Kit[];
@@ -41,6 +43,7 @@ async function currentSnapshot(userKey: string): Promise<Snapshot> {
 }
 
 export default function DataTransfer({ kits, userKey, onImportKits, notify }: Props) {
+  const { t } = useLanguage(transferTranslations);
   const [busy, setBusy] = useState('');
   const [incoming, setIncoming] = useState<TransferBundle | null>(null);
   const [filename, setFilename] = useState('');
@@ -49,6 +52,12 @@ export default function DataTransfer({ kits, userKey, onImportKits, notify }: Pr
   const fileInput = useRef<HTMLInputElement>(null);
   const owner = useRef(userKey);
   owner.current = userKey;
+
+  function errorMessage(error: unknown, fallback: string) {
+    const message = error instanceof Error ? error.message : fallback;
+    const limit = /^This import would exceed your 100-kit library limit\. Make room for (\d+) imported kits first\.$/.exec(message);
+    return limit ? t('This import would exceed your 100-kit library limit. Make room for {count} imported kits first.', { count: limit[1] }) : t(message);
+  }
 
   async function exportWorkspace() {
     const exportingUser = userKey;
@@ -64,8 +73,8 @@ export default function DataTransfer({ kits, userKey, onImportKits, notify }: Pr
       anchor.download = `matrix-workspace-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(anchor); anchor.click(); anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      notify('Workspace exported. Import this file in Matrix on the new website or another device.');
-    } catch (error) { notify(error instanceof Error ? error.message : 'The workspace could not be exported.', true); }
+      notify(t('Workspace exported. Import this file in Matrix on the new website or another device.'));
+    } catch (error) { notify(errorMessage(error, 'The workspace could not be exported.'), true); }
     finally { setBusy(''); }
   }
 
@@ -76,7 +85,7 @@ export default function DataTransfer({ kits, userKey, onImportKits, notify }: Pr
       if (file.size > TRANSFER_MAX_BYTES) throw new Error('Choose a Matrix workspace file smaller than 12 MB.');
       const bundle = parseTransferBundle(await file.text());
       setIncoming(bundle); setFilename(file.name); setReplaceCourses(false); setReplaceGrades(false);
-    } catch (error) { notify(error instanceof Error ? error.message : 'This workspace file could not be read.', true); }
+    } catch (error) { notify(errorMessage(error, 'This workspace file could not be read.'), true); }
     finally { setBusy(''); if (fileInput.current) fileInput.current.value = ''; }
   }
 
@@ -106,33 +115,33 @@ export default function DataTransfer({ kits, userKey, onImportKits, notify }: Pr
       window.dispatchEvent(new CustomEvent('matrix-workspace-imported', { detail: { userKey: importingUser } }));
       await onImportKits(plan.kits);
       setIncoming(null); setFilename('');
-      const preserved = plan.keptCoursePlans || plan.keptGradeRows ? ' Existing course plans and grade entries were kept where they overlapped.' : '';
-      const skipped = plan.skippedKits ? ` ${plan.skippedKits} identical kit${plan.skippedKits === 1 ? ' was' : 's were'} skipped.` : '';
-      notify(`Workspace imported with ${plan.kits.length} new study kit${plan.kits.length === 1 ? '' : 's'}.${skipped}${preserved}`);
+      const preserved = plan.keptCoursePlans || plan.keptGradeRows ? t('Existing course plans and grade entries were kept where they overlapped.') : '';
+      const skipped = plan.skippedKits ? t('Identical kits skipped: {count}.', { count: plan.skippedKits }) : '';
+      notify([t('Workspace imported. New study kits: {count}.', { count: plan.kits.length }), skipped, preserved].filter(Boolean).join(' '));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'The workspace could not be imported.';
-      notify(workspaceSaved ? `Notes and plans were saved, but the study-kit import may be incomplete. ${message}` : message, true);
+      const message = errorMessage(error, 'The workspace could not be imported.');
+      notify(workspaceSaved ? t('Notes and plans were saved, but the study-kit import may be incomplete. {message}', { message }) : message, true);
     } finally { setBusy(''); }
   }
 
   const counts = incoming ? transferCounts(incoming) : null;
-  return <section className="panel" aria-label="Workspace transfer">
-    <h3>Move your whole workspace</h3>
-    <p className="muted">Download your study kits, notes, tasks, resources, exam plans, and grades. Import the file into Matrix on the new website or another device.</p>
-    <p className="tiny muted">AI keys, connection settings, and account details are never included. Your existing work is kept when you import.</p>
+  return <section className="panel" aria-label={t('Workspace transfer')}>
+    <h3>{t('Move your whole workspace')}</h3>
+    <p className="muted">{t('Download your study kits, notes, tasks, resources, exam plans, and grades. Import the file into Matrix on the new website or another device.')}</p>
+    <p className="tiny muted">{t('AI keys, connection settings, and account details are never included. Your existing work is kept when you import.')}</p>
     <div className="top-actions" style={{ flexWrap: 'wrap', marginTop: 18 }}>
-      <button className="button secondary" disabled={Boolean(busy)} onClick={exportWorkspace}><Download size={17}/>Export workspace</button>
-      <button className="button secondary" disabled={Boolean(busy)} onClick={() => fileInput.current?.click()}><Upload size={17}/>Import workspace</button>
+      <button className="button secondary" disabled={Boolean(busy)} onClick={exportWorkspace}><Download size={17}/>{t('Export workspace')}</button>
+      <button className="button secondary" disabled={Boolean(busy)} onClick={() => fileInput.current?.click()}><Upload size={17}/>{t('Import workspace')}</button>
     </div>
     <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={event => { void chooseFile(event.target.files?.[0]); }}/>
-    {busy && <p className="muted" role="status" style={{ marginTop: 16 }}>{busy}</p>}
+    {busy && <p className="muted" role="status" style={{ marginTop: 16 }}>{t(busy)}</p>}
     {incoming && counts && <div style={{ marginTop: 22, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><FolderCheck size={21}/><h4 style={{ margin: 0, overflowWrap: 'anywhere' }}>{filename}</h4></div>
-      <p className="muted">{counts.kits} kits · {counts.notes} notes · {counts.tasks} tasks · {counts.resources} resources · {counts.courses} course plans · {counts.grades} grade entries</p>
-      <p className="tiny muted">New entries are copied into your workspace. Identical entries are skipped. Matching course plans and your current grade calculator are kept unless you choose below.</p>
-      {counts.courses > 0 && <label className="check-row"><input type="checkbox" checked={replaceCourses} disabled={Boolean(busy)} onChange={event => setReplaceCourses(event.target.checked)}/>Use imported exam plans for matching courses</label>}
-      {counts.grades > 0 && <label className="check-row"><input type="checkbox" checked={replaceGrades} disabled={Boolean(busy)} onChange={event => setReplaceGrades(event.target.checked)}/>Replace my grade calculator with the imported grades</label>}
-      <div className="top-actions" style={{ flexWrap: 'wrap', marginTop: 18 }}><button className="button primary" disabled={Boolean(busy)} onClick={importWorkspace}>Import into this workspace</button><button className="button ghost" disabled={Boolean(busy)} onClick={() => { setIncoming(null); setFilename(''); }}>Cancel</button></div>
+      <p className="muted">{t('Kits: {kits} · Notes: {notes} · Tasks: {tasks} · Resources: {resources} · Course plans: {courses} · Grade entries: {grades}', counts)}</p>
+      <p className="tiny muted">{t('New entries are copied into your workspace. Identical entries are skipped. Matching course plans and your current grade calculator are kept unless you choose below.')}</p>
+      {counts.courses > 0 && <label className="check-row"><input type="checkbox" checked={replaceCourses} disabled={Boolean(busy)} onChange={event => setReplaceCourses(event.target.checked)}/>{t('Use imported exam plans for matching courses')}</label>}
+      {counts.grades > 0 && <label className="check-row"><input type="checkbox" checked={replaceGrades} disabled={Boolean(busy)} onChange={event => setReplaceGrades(event.target.checked)}/>{t('Replace my grade calculator with the imported grades')}</label>}
+      <div className="top-actions" style={{ flexWrap: 'wrap', marginTop: 18 }}><button className="button primary" disabled={Boolean(busy)} onClick={importWorkspace}>{t('Import into this workspace')}</button><button className="button ghost" disabled={Boolean(busy)} onClick={() => { setIncoming(null); setFilename(''); }}>{t('Cancel')}</button></div>
     </div>}
   </section>;
 }
