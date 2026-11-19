@@ -71,6 +71,9 @@
 @media(max-width:380px){.hero-label{white-space:normal;line-height:1.6;align-items:flex-start;max-width:205px}.hero-label svg{margin-top:2px}.hero h2{font-size:2.3rem}.module-card{padding:14px 9px}.module-card>span:not(.module-icon){overflow-wrap:anywhere}.toolbar .search-field{min-width:100%}.toolbar>.button.small{margin-left:auto}.stats-grid .stat-card{padding:13px 8px}.stat-card>div>strong{font-size:1.08rem}.study-kit-bar>.top-actions>.icon-button{width:28px}.study-kit-bar>div:first-child{width:calc(100% - 92px)}.focus-orb .timer-display{font-size:4.4rem}.settings-nav .tab{font-size:.75rem}}
 
 @media(max-width:800px){.sidebar:not(.open){visibility:hidden}.sidebar.open{visibility:visible}}
+.sidebar-toggle{display:inline-flex;flex-shrink:0}.sidebar-close{display:none}
+@media(max-width:800px){.sidebar-close{display:inline-flex;position:absolute;right:10px;top:12px}}
+@media(min-width:801px){.app-shell.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)}.sidebar-collapsed .sidebar{transform:translateX(-100%);visibility:hidden;pointer-events:none}.sidebar-collapsed .toast,.sidebar-collapsed .busy-indicator{left:50%}}
 
 /* Keep dark accent fills visible without changing the selected color. */
 .nav-item.active{border-color:var(--accent-outline)}

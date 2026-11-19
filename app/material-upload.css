@@ -1,0 +1,18 @@
+.material-upload .upload-zone{margin-bottom:10px;transition:border-color .15s,background .15s,box-shadow .15s}
+.material-upload .upload-zone.is-dragging{border:2px dashed var(--accent-outline);background:color-mix(in srgb,var(--accent) 12%,var(--panel));box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 10%,transparent)}
+.material-upload .upload-zone.is-reading{opacity:1;cursor:progress}
+.material-upload .upload-zone:focus-visible{outline:2px solid var(--accent-outline);outline-offset:3px}
+.material-upload-note{margin:0 0 9px;line-height:1.55}
+.material-upload-status{margin:8px 0;overflow-wrap:anywhere;color:var(--text)}
+.material-upload-status:empty{display:none}
+.material-upload-results{list-style:none;padding:0;margin:10px 0 20px;max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
+.material-upload-results li{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border-bottom:1px solid var(--border)}
+.material-upload-results li:last-child{border-bottom:0}
+.material-upload-results li>svg{flex-shrink:0;margin-top:3px;color:var(--accent-foreground)}
+.material-upload-results li.error>svg{color:var(--danger,#ef9a9a)}
+.material-upload-results li>div{min-width:0;display:grid;gap:3px}
+.material-upload-results strong{font-size:.8125rem;font-weight:500;overflow-wrap:anywhere}
+.material-upload-results span{font-size:.75rem;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.material-spinner{animation:material-spin 1.1s linear infinite}
+@keyframes material-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.material-spinner{animation:none}.material-upload .upload-zone{transition:none}}

@@ -1,6 +1,6 @@
 # Matrix independent deployment
 
-Matrix's canonical public address is [matrix-study.barri857.workers.dev](https://matrix-study.barri857.workers.dev). This version runs in the owner's Cloudflare account with a native D1 database and Matrix accounts. Visitors do not need ChatGPT, a ChatGPT subscription, or access to the earlier Sites project. Cloudflare hosting and each visitor's chosen AI provider remain separate services with their own usage terms.
+Matrix's canonical public address is [matrix-study.barri-nq.workers.dev](https://matrix-study.barri-nq.workers.dev). This version runs in the owner's Cloudflare account with a native D1 database and Matrix accounts. Visitors do not need ChatGPT, a ChatGPT subscription, or access to the earlier Sites project. Cloudflare hosting and each visitor's chosen AI provider remain separate services with their own usage terms.
 
 The earlier Sites implementation remains in this repository for migration and compatibility. Use the `:independent` commands below for the independent website. The unqualified `build`, `dev`, and `start` commands still target the legacy Sites/Vinext build.
 
@@ -16,7 +16,7 @@ The earlier Sites implementation remains in this repository for migration and co
 | `scripts/independent-security-assets.mjs` | Generates `_headers` only inside the independent build output |
 | `dist-independent/client/` | Generated production frontend assets; do not edit these files directly |
 
-The Worker is named `matrix-study`. Its `DB` binding points to the configured `matrix-study` D1 database. `APP_URL` is `https://matrix-study.barri857.workers.dev`. If deploying a separate copy to another Cloudflare account, deliberately change the account/database identifiers and public origin in `independent/wrangler.json`; do not reuse another deployment's database.
+The Worker is named `matrix-study`. Its `DB` binding points to the configured `matrix-study` D1 database. `APP_URL` is `https://matrix-study.barri-nq.workers.dev`. If deploying a separate copy to another Cloudflare account, deliberately change the account/database identifiers and public origin in `independent/wrangler.json`; do not reuse another deployment's database.
 
 ## Build and publish
 
@@ -61,8 +61,8 @@ Use the Google Cloud project `matrix-study` and a **Web application** OAuth clie
 
 | Google client setting | Value |
 | --- | --- |
-| Authorized JavaScript origin | `https://matrix-study.barri857.workers.dev` |
-| Authorized redirect URI | `https://matrix-study.barri857.workers.dev/api/auth/callback/google` |
+| Authorized JavaScript origin | `https://matrix-study.barri-nq.workers.dev` |
+| Authorized redirect URI | `https://matrix-study.barri-nq.workers.dev/api/auth/callback/google` |
 
 The callback path is `/api/auth/callback/google`. Its origin must match `APP_URL`, and the full redirect URI must match Google's configuration exactly. [Google's server OAuth documentation](https://developers.google.com/identity/protocols/oauth2/web-server) describes this matching requirement.
 
@@ -102,7 +102,7 @@ The Sites website and the independent website have separate accounts, databases,
 
 1. Open the earlier Matrix website in the browser/account containing your work.
 2. Open **Settings → Your workspace → Move your whole workspace** and choose **Export workspace**.
-3. Open [the independent Matrix website](https://matrix-study.barri857.workers.dev), then sign in or create the Matrix account you want to use.
+3. Open [the independent Matrix website](https://matrix-study.barri-nq.workers.dev), then sign in or create the Matrix account you want to use.
 4. Open the same account-settings section, choose **Import workspace**, select the exported JSON file, review its contents, and choose **Import into this workspace**.
 5. Re-enter your AI API key under **AI connection** on the new website.
 
