@@ -1,4 +1,5 @@
 import type { PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import { MAX_GUIDE_IMAGE_DATA, MAX_GUIDE_IMAGE_EDGE, type GuideImage } from './study';
 
 export type VisualPage = {
   data: string;
@@ -147,7 +148,7 @@ async function htmlImage(file: File, signal?: AbortSignal): Promise<{ source: Ca
   } catch (error) { image.src = ''; URL.revokeObjectURL(url); throw error; }
 }
 
-async function renderImage(file: File, signal?: AbortSignal): Promise<VisualPage> {
+async function decodeImage(file: File, signal?: AbortSignal) {
   const extension = file.name.split('.').pop()?.toLowerCase();
   let image: { source: CanvasImageSource; width: number; height: number; close: () => void };
   if (typeof createImageBitmap === 'function') {
@@ -164,6 +165,12 @@ async function renderImage(file: File, signal?: AbortSignal): Promise<VisualPage
     if (extension === 'gif') throw new Error('This browser cannot read a GIF frame reliably. Save it as PNG or use a current browser.');
     image = await htmlImage(file, signal);
   }
+  return image;
+}
+
+async function renderImage(file: File, signal?: AbortSignal): Promise<VisualPage> {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  const image = await decodeImage(file, signal);
   let surface: ReturnType<typeof canvas> | undefined;
   try {
     checkSignal(signal);
@@ -178,6 +185,41 @@ async function renderImage(file: File, signal?: AbortSignal): Promise<VisualPage
   } finally {
     image.close();
     if (surface) { surface.element.width = 0; surface.element.height = 0; }
+  }
+}
+
+/** Prepare a deliberately attached image for storage inside the saved guide. */
+export async function prepareGuideImage(file: File): Promise<GuideImage> {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  if (!IMAGE_EXTENSIONS.has(extension)) throw new Error('Choose a JPG, PNG, WebP, GIF or BMP image.');
+  if (!file.size || file.size > MAX_VISUAL_FILE_BYTES) throw new Error('Choose a nonempty image up to 12 MB.');
+  const image = await decodeImage(file);
+  try {
+    if (image.width * image.height > MAX_SOURCE_IMAGE_PIXELS) {
+      throw new Error('This photo is larger than 80 megapixels. Resize or crop it before importing.');
+    }
+    let scale = Math.min(1, MAX_GUIDE_IMAGE_EDGE / Math.max(image.width, image.height));
+    for (let attempt = 0; attempt < 6; attempt++, scale *= 0.77) {
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+      const surface = canvas(width, height);
+      try {
+        surface.context.drawImage(image.source, 0, 0, width, height);
+        for (const quality of [0.9, 0.76, 0.63]) {
+          const blob = await blobFromCanvas(surface.element, 'image/jpeg', quality);
+          if (Math.ceil(blob.size / 3) * 4 <= MAX_GUIDE_IMAGE_DATA) {
+            const name = file.name.replace(/[\r\n]/g, ' ').trim().slice(0, 160) || 'Guide image';
+            return { id: crypto.randomUUID(), name, data: await base64(blob), width, height };
+          }
+        }
+      } finally {
+        surface.element.width = 0;
+        surface.element.height = 0;
+      }
+    }
+    throw new Error('This image is too large for the guide. Crop or resize it and try again.');
+  } finally {
+    image.close();
   }
 }
 

@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {aiRequestSchema,runAI,SafeError,MAX_AI_REQUEST_BYTES} from '../lib/ai';
+import {MAX_SYNCED_KIT_BYTES} from '../lib/study';
 import {body,errorResponse,idSchema,json,kitSchema,sameOrigin} from '../app/api/_shared';
 import {createAuth,getAuthConfig,getUser,type AuthEnv} from './auth';
 import {workspaceSchema} from './workspace-schema';
@@ -51,8 +52,8 @@ async function api(request:Request,env:Env):Promise<Response>{
       return json({deleted:true});
     }
     const input=await body(request) as {kit?:unknown},kit=kitSchema.parse(input?.kit),data=JSON.stringify(kit);
-    if(new TextEncoder().encode(data).byteLength>500000)throw new SafeError('Keep this kit under 500 KB to sync it.',413);
     const bytes=new TextEncoder().encode(data).byteLength;
+    if(bytes>MAX_SYNCED_KIT_BYTES)throw new SafeError('This kit is too large to sync. Shorten its text or remove some guide images.',413);
     const existingBytes=await env.DB.prepare('SELECT coalesce(sum(length(CAST(data AS BLOB))),0) AS bytes FROM kits WHERE owner_id=? AND id<>?').bind(user.userId,kit.id).first<{bytes:number}>();
     if((existingBytes?.bytes||0)+bytes>8000000)throw new SafeError('Your cloud library has reached its 8 MB storage limit. Export and remove an unused kit to make room.',409);
     await env.DB.prepare(`INSERT INTO kits(owner_id,id,data,updated_at) SELECT ?,?,?,?

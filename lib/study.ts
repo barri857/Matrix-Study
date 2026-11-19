@@ -17,6 +17,25 @@ export type Question = {
   topic: string;
 };
 
+export type GuideImage = {
+  id: string;
+  name: string;
+  data: string;
+  width: number;
+  height: number;
+};
+
+export const MAX_GUIDE_IMAGES = 6;
+export const MAX_GUIDE_IMAGE_DATA = 120_000;
+export const MAX_GUIDE_IMAGE_TOTAL = 320_000;
+export const MAX_GUIDE_IMAGE_EDGE = 1600;
+export const MAX_SYNCED_KIT_BYTES = 500_000;
+
+export function isGuideImageData(data: string) {
+  return data.length <= MAX_GUIDE_IMAGE_DATA && data.length % 4 === 0 &&
+    /^\/9j\/[A-Za-z0-9+/]+={0,2}$/.test(data);
+}
+
 export type Kit = {
   id: string;
   title: string;
@@ -25,6 +44,7 @@ export type Kit = {
   source: string;
   summary: string;
   guide: string;
+  guideImages?: GuideImage[];
   cards: Card[];
   questions: Question[];
   updatedAt: number;
@@ -248,6 +268,23 @@ export function validateKit(input: unknown): Kit {
     questions,
     updatedAt: number(item.updatedAt, 'Updated date'),
   };
+  if (item.guideImages !== undefined) {
+    const images = list(item.guideImages, 'Guide images', MAX_GUIDE_IMAGES).map(raw => {
+      const image = record(raw, 'Guide image');
+      const data = text(image.data, 'Image data', MAX_GUIDE_IMAGE_DATA);
+      const width = number(image.width, 'Image width', MAX_GUIDE_IMAGE_EDGE);
+      const height = number(image.height, 'Image height', MAX_GUIDE_IMAGE_EDGE);
+      if (!isGuideImageData(data) || width < 1 || height < 1 || !Number.isInteger(width) || !Number.isInteger(height)) {
+        throw new Error('This guide contains an invalid image.');
+      }
+      return {id: identifier(image.id, 'Image ID'), name: text(image.name, 'Image name', 160), data, width, height};
+    });
+    if (new Set(images.map(image => image.id)).size !== images.length ||
+        images.reduce((total, image) => total + image.data.length, 0) > MAX_GUIDE_IMAGE_TOTAL) {
+      throw new Error('This guide contains too much image data or duplicate images.');
+    }
+    if (images.length) kit.guideImages = images;
+  }
   if (item.demo !== undefined) {
     if (typeof item.demo !== 'boolean') throw new Error('Sample status must be true or false.');
     kit.demo = item.demo;

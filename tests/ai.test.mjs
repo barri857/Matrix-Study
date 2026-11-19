@@ -35,6 +35,56 @@ test("source instructions stay outside the privileged system prompt", () => {
   assert.match(request.body.instructions, /untrusted data/);
 });
 
+test("guide actions validate their inputs within existing study kit boundaries", () => {
+  const regenerate = { ...base, action: "regenerate-guide", text: "" };
+  assert.equal(aiRequestSchema.safeParse(regenerate).success, false);
+  assert.equal(aiRequestSchema.safeParse({ ...regenerate, guide: generated.guide }).success, true);
+  assert.equal(aiRequestSchema.safeParse({ ...regenerate, text: "x".repeat(200000) }).success, true);
+  assert.equal(aiRequestSchema.safeParse({ ...regenerate, text: "x".repeat(200001) }).success, false);
+  const edit = { ...base, action: "smart-edit-guide", guide: generated.guide, instruction: "Add a worked example." };
+  assert.equal(aiRequestSchema.safeParse(edit).success, true);
+  for (const invalid of [
+    { guide: " " },
+    { guide: "x".repeat(100001) },
+    { instruction: " " },
+    { instruction: "x".repeat(6001) },
+    { images: [image] },
+  ]) assert.equal(aiRequestSchema.safeParse({ ...edit, ...invalid }).success, false);
+});
+
+test("guide actions separate notes and edit requests, request text across adapters, and return only Markdown", async () => {
+  const edited = "# Photosynthesis\n\n## Worked example\n\n1. Start with light and carbon dioxide.\n2. Trace energy storage.";
+  const edit = {
+    ...base,
+    action: "smart-edit-guide",
+    guide: generated.guide,
+    instruction: "Add a worked example after the explanation.",
+  };
+  for (const provider of providers) {
+    const input = aiRequestSchema.parse({ ...edit, provider, model: "test-model" });
+    const { body } = providerRequest(input);
+    const system = provider === "openai" ? body.instructions
+      : provider === "anthropic" ? body.system
+      : provider === "gemini" ? body.systemInstruction.parts[0].text
+      : body.messages[0].content;
+    const user = provider === "openai" ? body.input[0].content
+      : provider === "anthropic" ? body.messages[0].content
+      : provider === "gemini" ? body.contents[0].parts[0].text
+      : body.messages[1].content;
+    assert.ok(!system.includes(edit.instruction));
+    assert.ok(!system.includes(edit.guide));
+    assert.deepEqual(JSON.parse(user), { study_source: edit.text, existing_guide: edit.guide, learner_edit_request: edit.instruction });
+    assert.equal(body.text, undefined);
+    assert.equal(body.response_format, undefined);
+    assert.equal(body.generationConfig?.responseMimeType, undefined);
+    assert.deepEqual(await runAI(input, async () => Response.json(envelopeFor(provider, edited))), { reply: edited });
+  }
+  const regenerate = aiRequestSchema.parse({ ...base, action: "regenerate-guide", text: "", guide: generated.guide });
+  assert.deepEqual(JSON.parse(providerRequest(regenerate).body.input[0].content), { study_source: "", existing_guide: generated.guide });
+  assert.deepEqual(await runAI(regenerate, async () => Response.json(envelopeFor("openai", "```markdown\n" + edited + "\n```"))), { reply: edited });
+  await assert.rejects(runAI(regenerate, async () => Response.json(envelopeFor("openai", "x".repeat(100001)))), /too long to save/);
+});
+
 test("input validation rejects invalid providers, header injection, and oversized source", () => {
   assert.equal(aiRequestSchema.safeParse({ ...base, provider: "custom", endpoint: "https://example.com" }).success, false);
   assert.equal(aiRequestSchema.safeParse({ ...base, apiKey: "key\r\nInjected: yes" }).success, false);

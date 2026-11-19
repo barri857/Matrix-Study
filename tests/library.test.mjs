@@ -55,10 +55,15 @@ test("owned libraries, limits, stale updates, share revocation and private progr
   assert.equal((await workspace.PUT(payload("workspace", { data: {} }))).status, 401);
 
   globalThis.__matrixTestUser = { userId: "alice", displayName: "Alice" };
-  assert.equal((await library.POST(payload("library", { kit: { ...sample("private", "Alice's notes"), apiKey: "must-not-save" } }))).status, 200);
+  const guideImage = { id: "diagram", name: "Diagram.jpg", data: "/9j/2Q==", width: 1, height: 1 };
+  const original = { ...sample("private", "Alice's notes"), guideImages: [guideImage], apiKey: "must-not-save" };
+  assert.equal((await library.POST(payload("library", { kit: original }))).status, 200);
+  const unsafeImage = { ...guideImage, data: "data:image/svg+xml;base64,PHN2Zz4=" };
+  assert.equal((await library.POST(payload("library", { kit: { ...original, guideImages: [unsafeImage] } }))).status, 400);
   assert.equal((await library.POST(payload("library", { kit: sample("private", "Stale text", 99) }))).status, 200);
   const alice = await (await library.GET()).json();
   assert.equal(alice.kits[0].title, "Alice's notes");
+  assert.deepEqual(alice.kits[0].guideImages, [guideImage]);
   assert.equal(alice.kits[0].apiKey, undefined);
   assert.equal((await library.POST(payload("library", { kit: sample("bad-origin") }, "https://attacker.test"))).status, 403);
   const planner = { version: 1, updatedAt: 100, tasks: [{ id: "task1", title: "Review", date: "2026-11-20", subject: "Biology", done: false }], notes: [], bookmarks: [], courses: {}, grades: [] };
@@ -80,6 +85,7 @@ test("owned libraries, limits, stale updates, share revocation and private progr
   assert.equal((await (await library.GET()).json()).kits[0].title, "Bob's notes");
   const shared = await (await sharing.GET(new Request(`https://matrix.test/api/share?id=${share.shareId}`))).json();
   assert.equal(shared.kit.title, "Alice's notes");
+  assert.deepEqual(shared.kit.guideImages, [guideImage]);
   assert.deepEqual(shared.kit.history, []);
   assert.equal(shared.kit.cards[0].due, undefined);
   assert.notEqual(shared.kit.id, "private");

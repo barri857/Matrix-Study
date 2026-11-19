@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SafeError, readBoundedJson } from "@/lib/ai";
+import { isGuideImageData, MAX_GUIDE_IMAGES, MAX_GUIDE_IMAGE_EDGE, MAX_GUIDE_IMAGE_TOTAL } from "@/lib/study";
 
 export const idSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/);
 const finite = z.number().finite().nonnegative();
@@ -14,6 +15,15 @@ const question = z.object({
   options: z.array(z.string().min(1).max(2000)).min(2).max(6),
   answer: z.number().int().min(0).max(5), explanation: z.string().max(10000), topic: z.string().max(200),
 }).refine(value => value.answer < value.options.length);
+const guideImages = z.array(z.object({
+  id: idSchema,
+  name: z.string().trim().min(1).max(160),
+  data: z.string().refine(isGuideImageData),
+  width: z.number().int().min(1).max(MAX_GUIDE_IMAGE_EDGE),
+  height: z.number().int().min(1).max(MAX_GUIDE_IMAGE_EDGE),
+})).max(MAX_GUIDE_IMAGES).refine(images =>
+  new Set(images.map(image => image.id)).size === images.length &&
+  images.reduce((bytes, image) => bytes + image.data.length, 0) <= MAX_GUIDE_IMAGE_TOTAL);
 export const kitSchema = z.object({
   id: idSchema,
   title: z.string().trim().min(1).max(160),
@@ -22,6 +32,7 @@ export const kitSchema = z.object({
   source: z.string().max(200000).default(""),
   summary: z.string().max(20000).default(""),
   guide: z.string().max(100000).default(""),
+  guideImages: guideImages.optional(),
   cards: z.array(card).max(200),
   questions: z.array(question).max(200),
   updatedAt: finite,

@@ -83,3 +83,17 @@
 
 .tutor-connection{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0}.notice.error{border-color:var(--danger,#e48c8c)}
 .topbar .breadcrumb{min-width:0;flex:1}.topbar .breadcrumb strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar .sidebar-toggle{flex-shrink:0}
+.guide-toolbar { gap: 12px; flex-wrap: wrap; }
+.guide-edit-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.guide-images { margin-top: 24px; display: grid; gap: 16px; }
+.guide-images h3 { margin: 0; }
+.guide-images figure { margin: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.guide-images img { display: block; max-width: 100%; height: auto; margin-inline: auto; }
+.guide-images figcaption { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 12px; color: var(--muted); font-size: .875rem; }
+.guide-images figcaption span { overflow-wrap: anywhere; }
+.guide-download-settings .field { max-width: 320px; }
+.guide .markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.guide .markdown th, .guide .markdown td { border: 1px solid var(--border); padding: 7px 10px; }
+@media (max-width: 520px) {
+  .settings-nav { display: grid; grid-template-columns: repeat(2, 1fr); }
+}

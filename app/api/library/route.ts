@@ -3,6 +3,7 @@ import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { getDb } from "@/db";
 import { kits } from "@/db/schema";
 import { SafeError } from "@/lib/ai";
+import { MAX_SYNCED_KIT_BYTES } from "@/lib/study";
 import { body, errorResponse, idSchema, json, kitSchema, sameOrigin } from "../_shared";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     const payload = await body(request) as { kit?: unknown };
     const kit = kitSchema.parse(payload?.kit);
     const data = JSON.stringify(kit);
-    if (new TextEncoder().encode(data).byteLength > 500000) throw new SafeError("This kit is too large to sync. Keep it under 500 KB by shortening its source or guide.", 413);
+    if (new TextEncoder().encode(data).byteLength > MAX_SYNCED_KIT_BYTES) throw new SafeError("This kit is too large to sync. Shorten its text or remove some guide images.", 413);
     const db = getDb();
     // The count guard and upsert run in one statement so concurrent creates cannot exceed the account limit.
     await db.run(sql`INSERT INTO kits (owner_id, id, data, updated_at)
