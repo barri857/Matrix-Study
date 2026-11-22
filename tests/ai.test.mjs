@@ -182,6 +182,20 @@ test("all vision adapters return a faithful transcript without parsing a generat
   }
 });
 
+test("PDF scan batches opt into ordered transcripts and can fall back after a truncated reply", async () => {
+  const images = [{ ...image, label: "PDF page 1" }, { ...image, label: "PDF page 2" }];
+  const request = aiRequestSchema.parse({ ...visual, provider: "gemini", images, pageBatch: true });
+  assert.match(providerRequest(request).body.systemInstruction.parts[0].text, /exactly 2 non-empty strings in image order/);
+  assert.doesNotMatch(providerRequest({ ...request, pageBatch: undefined }).body.systemInstruction.parts[0].text, /in image order/);
+  assert.equal(aiRequestSchema.safeParse({ ...request, images: [image] }).success, false);
+  assert.equal(aiRequestSchema.safeParse({ ...request, images: [...images, ...images] }).success, false);
+  const transcript = JSON.stringify(["First page", "Second page"]);
+  assert.deepEqual(await runAI(request, async () => Response.json(envelopeFor("gemini", transcript))), { reply: transcript });
+  const truncated = async () => Response.json({ candidates: [{ finishReason: "MAX_TOKENS" }] });
+  assert.deepEqual(await runAI(request, truncated), { retryPagesIndividually: true });
+  await assert.rejects(runAI({ ...request, pageBatch: undefined }, truncated), /response limit/);
+});
+
 test("visual model failures explain vision support without leaking provider content", async () => {
   for (const status of [400, 404, 413, 422]) {
     await assert.rejects(runAI(visual, async () => new Response(`Secret ${base.apiKey}`, { status })), error => error.status === 400 && /vision-capable model/.test(error.message) && !error.message.includes(base.apiKey));

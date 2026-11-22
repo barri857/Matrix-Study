@@ -6,6 +6,8 @@ import remarkGfm from 'remark-gfm';
 import {demoKits,validateKit,reviewCard,mastery,dueCards,formatRelative,MAX_GUIDE_IMAGES,MAX_SYNCED_KIT_BYTES,type GuideImage,type Kit,type Card,type Question} from '../lib/study';
 import {downloadFile} from '../lib/files';
 import {MAX_KIT_SOURCE_CHARACTERS,MAX_UPLOAD_DRAFT_CHARACTERS,splitStudyMaterial} from '../lib/upload-content';
+import {pdfBatchContext,parsePdfBatchReply,visualRequestLabel} from '../lib/pdf-read-batch';
+import type {VisualPage} from '../lib/visual-documents';
 import type {GuideDownloadFormat} from '../lib/guide-download';
 import {GuideActions} from './guide-actions';
 import MaterialUpload from './material-upload';
@@ -87,7 +89,24 @@ export default function Matrix(){
    try { localStorage.setItem('matrix-guide-download-format',format); } catch { notify(t('Browser storage unavailable.'),true); }
  }
  const {focusMinutes,setFocusMinutes,focusRemaining,setFocusRemaining,focusEnd,setFocusEnd,focusCustom,setFocusCustom,focusReady}=useFocusTimer(minutes=>{logActivity('minutes',minutes);notify(t('Focus session complete. Take a well-earned break.'));},{ready,storageKey:'matrix-focus-timer-v1:'+userKey});
- const uploads=useMaterialUploads({value:draftText,onChange:setDraftText,onTitle:title=>setDraftTitle(current=>current||title),onBusy:setBusy,notify,canAnalyze:!!api.apiKey,onConnect:()=>setSettings('ai'),analyze:async(page,signal)=>{const result=await jsonRequest<{reply:string}>('/api/ai',{method:'POST',signal,body:JSON.stringify({provider:api.provider,model:api.model,apiKey:api.apiKey,action:'analyze',text:page.text,images:[{data:page.data,mimeType:page.mimeType,label:page.label}]})});if(!result.reply?.trim())throw new Error('Your model returned no visual reading. Try another vision-capable model.');return result.reply;}});
+ function requestVisualReading(pages:readonly VisualPage[],signal:AbortSignal){
+   const pageBatch=pages.length>1;
+   return jsonRequest<{reply?:string}>('/api/ai',{method:'POST',signal,body:JSON.stringify({
+     provider:api.provider,model:api.model,apiKey:api.apiKey,action:'analyze',
+     ...(pageBatch?{pageBatch}:{}),text:pageBatch?pdfBatchContext(pages):pages[0].text,
+     images:pages.map(({data,mimeType,label})=>({data,mimeType,label:visualRequestLabel(label)})),
+   })});
+ }
+ const uploads=useMaterialUploads({
+   value:draftText,onChange:setDraftText,onTitle:title=>setDraftTitle(current=>current||title),onBusy:setBusy,
+   notify,canAnalyze:!!api.apiKey,onConnect:()=>setSettings('ai'),
+   analyze:async(page,signal)=>{
+     const {reply}=await requestVisualReading([page],signal);
+     if(!reply?.trim())throw new Error('Your model returned no visual reading. Try another vision-capable model.');
+     return reply;
+   },
+   analyzeBatch:async(pages,signal)=>parsePdfBatchReply((await requestVisualReading(pages,signal)).reply||'',pages.length),
+ });
  useEffect(()=>{try{const saved=localStorage.getItem('matrix-custom-focus');if(saved&&Number.isInteger(Number(saved))&&Number(saved)>=1&&Number(saved)<=240)setCustomMinutes(saved)}catch{}},[]);
  function applyCustomTimer(){if(!focusReady)return;const minutes=Number(customMinutes);if(!Number.isInteger(minutes)||minutes<1||minutes>240)return notify(t('Choose a whole number from 1 to 240 minutes.'),true);setFocusCustom(true);setFocusMinutes(minutes);setFocusRemaining(minutes*60);setFocusEnd(0);try{localStorage.setItem('matrix-custom-focus',String(minutes))}catch{}}
  useEffect(()=>{if(apiLoaded)try{keepAIConnectionInTab(api)}catch{}},[api,apiLoaded]);

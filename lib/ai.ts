@@ -60,6 +60,7 @@ export const aiRequestSchema = z.object({
   guide: z.string().max(MAX_GUIDE_LENGTH).optional(),
   instruction: z.string().trim().max(MAX_GUIDE_INSTRUCTION_LENGTH).optional(),
   images: z.array(aiImageSchema).max(MAX_AI_IMAGES).optional(),
+  pageBatch: z.literal(true).optional(),
   question: z.string().trim().max(6000).optional(),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) })).max(12).optional(),
 }).superRefine((input, context) => {
@@ -75,6 +76,9 @@ export const aiRequestSchema = z.object({
   }
   if (input.action === "analyze" && !input.images?.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["images"], message: "Add at least one image to read visually." });
   if (input.action !== "analyze" && input.images !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["images"], message: "Images must use the visual-reading action." });
+  if (input.pageBatch && (input.action !== "analyze" || !input.images || input.images.length < 2 || input.images.length > 3)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["pageBatch"], message: "PDF batches require two or three pages." });
+  }
   if (input.images && input.images.reduce((total, image) => total + decodedSize(image.data), 0) > MAX_AI_IMAGES_BYTES) context.addIssue({ code: z.ZodIssueCode.custom, path: ["images"], message: "Send no more than 5 MB of images at a time." });
 });
 export type AIRequest = z.infer<typeof aiRequestSchema>;
@@ -183,7 +187,10 @@ export function providerRequest(input: AIRequest) {
   const writingGuide = isGuideAction(input.action);
   if (analyzing && !input.images?.length) throw new SafeError("Add at least one image or rendered page to read visually.");
   const images = input.images || [];
-  const system = `${SYSTEM}\n${taskPrompts[input.action]}`;
+  const batchFormat = input.pageBatch
+    ? `\nReturn only a valid JSON array of exactly ${images.length} non-empty strings in image order. Each string is the complete Markdown transcript for its corresponding page. Match any accompanying text to its page by label. Do not merge pages.`
+    : "";
+  const system = `${SYSTEM}\n${taskPrompts[input.action]}${batchFormat}`;
   const source = JSON.stringify({
     study_source: input.text,
     ...(input.action === "regenerate-guide" && input.text.trim().length < 20 && input.guide ? { existing_guide: input.guide } : {}),
@@ -251,7 +258,7 @@ export function providerRequest(input: AIRequest) {
   return { url, headers, body };
 }
 
-function extractReply(provider: Provider, data: ProviderReply) {
+function extractReply(provider: Provider, data: ProviderReply, pageBatch?: true) {
   let text = "";
   let truncated = false;
   if (provider === "openai") {
@@ -271,7 +278,10 @@ function extractReply(provider: Provider, data: ProviderReply) {
     text = data.choices?.[0]?.message?.content || "";
     truncated = data.choices?.[0]?.finish_reason === "length";
   }
-  if (truncated) throw new SafeError("The model reached its response limit. Shorten the source or choose another model.", 502);
+  if (truncated) {
+    if (pageBatch) return null;
+    throw new SafeError("The model reached its response limit. Shorten the source or choose another model.", 502);
+  }
   if (!text.trim()) throw new SafeError("The model returned no usable text. Try a different model or revise the material.", 502);
   return text;
 }
@@ -360,7 +370,8 @@ export async function runAI(input: AIRequest, fetcher: typeof fetch = fetch) {
       throw new SafeError("The AI provider is temporarily unavailable. Please try again later.", 502);
     }
     const data = await readBoundedJson(response, 2000000) as ProviderReply;
-    const reply = extractReply(input.provider, data);
+    const reply = extractReply(input.provider, data, input.pageBatch);
+    if (reply === null) return { retryPagesIndividually: true };
     if (input.action === "generate") return parseGenerated(reply);
     if (isGuideAction(input.action)) return { reply: parseGuide(reply) };
     return { reply: input.action === "test" ? "Connected successfully. Your model is ready." : reply };

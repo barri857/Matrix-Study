@@ -1,4 +1,4 @@
-import type { PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import type { OPS, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { MAX_GUIDE_IMAGE_DATA, MAX_GUIDE_IMAGE_EDGE, type GuideImage } from './study';
 
 export type VisualPage = {
@@ -10,6 +10,8 @@ export type VisualPage = {
   height: number;
   warnings?: string[];
 };
+
+export type StudyPage = VisualPage | {kind: 'text' | 'blank'; label: string; text: string; warnings?: string[]};
 
 export const MAX_VISUAL_FILE_BYTES = 12 * 1024 * 1024;
 export const MAX_VISUAL_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -80,7 +82,66 @@ async function pageText(page: PDFPageProxy) {
   return text;
 }
 
-async function* renderPdf(file: File, signal?: AbortSignal): AsyncGenerator<VisualPage> {
+const textOperators = [
+  'dependency', 'save', 'restore', 'transform', 'beginMarkedContent', 'beginMarkedContentProps', 'endMarkedContent',
+  'beginText', 'endText', 'setFont', 'setCharSpacing', 'setWordSpacing', 'setHScale', 'setLeading',
+  'setTextRise', 'moveText', 'setLeadingMoveText', 'setTextMatrix', 'nextLine', 'showText', 'showSpacedText',
+  'nextLineShowText', 'nextLineSetSpacingShowText', 'setStrokeRGBColor', 'setLineWidth', 'setLineCap',
+  'setLineJoin', 'setMiterLimit', 'setDash', 'setRenderingIntent', 'setFlatness', 'clip', 'eoClip',
+] as const;
+
+function hasOnlyReadableText(ops: typeof OPS, list: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>, text: string) {
+  if (text.length < 20 || /[\uFFFD\uE000-\uF8FF]/.test(text)) return false;
+  const safe = new Set<number>(textOperators.map(name => ops[name]));
+  const fills: string[] = [];
+  let fill = '#000000';
+  let markedText = false;
+  for (let i = 0; i < list.fnArray.length; i++) {
+    const operator = list.fnArray[i];
+    const args = list.argsArray[i];
+    if (operator === ops.save) fills.push(fill);
+    if (operator === ops.restore) fill = fills.pop() ?? '#000000';
+    if (operator === ops.setFillRGBColor) {
+      fill = args[0];
+      continue;
+    }
+    if (operator === ops.constructPath) {
+      if (args[0] === ops.endPath || (args[0] === ops.fill && fill === '#ffffff' && !markedText && args[1]?.[0]?.length === 13)) continue;
+      return false;
+    }
+    if (operator === ops.setGState) {
+      if (!args[0].every(([key, value]: [string, unknown]) =>
+        (['CA','ca'].includes(key) && value === 1) || (key === 'BM' && value === 'source-over') || (key === 'SMask' && value === false))) return false;
+      continue;
+    }
+    if (operator === ops.showText || operator === ops.showSpacedText || operator === ops.nextLineShowText || operator === ops.nextLineSetSpacingShowText) {
+      if (fill === '#ffffff') return false;
+      markedText = true;
+    }
+    if (!safe.has(operator)) return false;
+  }
+  return markedText;
+}
+
+function canvasIsWhite(context: CanvasRenderingContext2D, width: number, height: number) {
+  const pixels = new Uint32Array(context.getImageData(0, 0, width, height).data.buffer);
+  return pixels.every(pixel => pixel === 0xffffffff);
+}
+
+function encodePdfForOcr(element: HTMLCanvasElement): Pick<VisualPage, 'data' | 'mimeType'> {
+  // At the full render size, JPEG keeps scan uploads much smaller than PNG.
+  for (const quality of [0.92, 0.82, 0.7]) {
+    const [, data] = element.toDataURL('image/jpeg', quality).split(',', 2);
+    if (data && Math.ceil(data.length * 3 / 4) <= MAX_VISUAL_IMAGE_BYTES) {
+      return {data,mimeType:'image/jpeg'};
+    }
+  }
+  throw new Error('This image is too detailed to send at a readable size. Crop it into smaller sections and add them separately.');
+}
+
+function renderPdf(file: File, signal?: AbortSignal): AsyncGenerator<VisualPage>;
+function renderPdf(file: File, signal: AbortSignal | undefined, startAfter: number, onPage?: (page: number, total: number) => void): AsyncGenerator<StudyPage>;
+async function* renderPdf(file: File, signal?: AbortSignal, startAfter?: number, onPage?: (page: number, total: number) => void): AsyncGenerator<StudyPage> {
   const pdf = await import('pdfjs-dist');
   checkSignal(signal);
   pdf.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
@@ -100,24 +161,37 @@ async function* renderPdf(file: File, signal?: AbortSignal): AsyncGenerator<Visu
     checkSignal(signal);
     const doc = await abortable(loading.promise, signal);
     if (doc.numPages > MAX_VISUAL_PAGES) throw new Error('Please split PDFs longer than 200 pages. No pages from this file were read.');
-    for (let index = 1; index <= doc.numPages; index++) {
+    for (let index = (startAfter ?? 0) + 1; index <= doc.numPages; index++) {
       checkSignal(signal);
+      onPage?.(index,doc.numPages);
       const page = await abortable(doc.getPage(index), signal);
       let surface: ReturnType<typeof canvas> | undefined;
-      let result: VisualPage;
+      let result: StudyPage | undefined;
+      const label = `${file.name} · page ${index} of ${doc.numPages}`;
       try {
-        // Render at 2x PDF points unless the edge/pixel bounds require less.
-        const natural = page.getViewport({ scale: 2 });
-        const size = visualDimensions(natural.width, natural.height);
-        const viewport = page.getViewport({ scale: 2 * Math.min(size.width / natural.width, size.height / natural.height) });
-        const width = Math.max(1, Math.floor(viewport.width)), height = Math.max(1, Math.floor(viewport.height));
-        surface = canvas(width, height);
-        active = page.render({ canvas: surface.element, canvasContext: surface.context, viewport, background: '#ffffff', annotationMode: pdf.AnnotationMode.ENABLE });
-        await abortable(active.promise, signal);
-        active = undefined;
         const text = await abortable(pageText(page), signal);
-        const encoded = await encode(surface.element, signal);
-        result = { ...encoded, label: `${file.name} · page ${index} of ${doc.numPages}`, text, width, height };
+        if (startAfter !== undefined && text.length >= 20) {
+          const list = await abortable(page.getOperatorList({annotationMode: pdf.AnnotationMode.ENABLE}), signal);
+          if (hasOnlyReadableText(pdf.OPS, list, text)) {
+            result = {kind:'text', label, text};
+          }
+        }
+        if (!result) {
+          const natural = page.getViewport({ scale: 2 });
+          const size = visualDimensions(natural.width, natural.height);
+          const viewport = page.getViewport({ scale: 2 * Math.min(size.width / natural.width, size.height / natural.height) });
+          const width = Math.max(1, Math.floor(viewport.width)), height = Math.max(1, Math.floor(viewport.height));
+          surface = canvas(width, height);
+          active = page.render({ canvas: surface.element, canvasContext: surface.context, viewport, background: '#ffffff', annotationMode: pdf.AnnotationMode.ENABLE });
+          await abortable(active.promise, signal);
+          active = undefined;
+          if (startAfter !== undefined && canvasIsWhite(surface.context, width, height)) {
+            result = {kind:'blank',label,text:''};
+          } else {
+            const encoded = startAfter === undefined ? await encode(surface.element, signal) : encodePdfForOcr(surface.element);
+            result = { ...encoded, label, text, width, height };
+          }
+        }
       } finally {
         active?.cancel(); active = undefined;
         if (surface) { surface.element.width = 0; surface.element.height = 0; }
@@ -136,6 +210,12 @@ async function* renderPdf(file: File, signal?: AbortSignal): AsyncGenerator<Visu
     active?.cancel();
     await destroy().catch(() => {});
   }
+}
+
+export function readPdfForStudy(file: File, signal: AbortSignal, startAfter = 0, onPage?: (page: number, total: number) => void) {
+  if (!file.size) throw new Error('This file is empty.');
+  if (file.size > MAX_VISUAL_FILE_BYTES) throw new Error('This file is larger than 12 MB. Choose a smaller file.');
+  return renderPdf(file, signal, startAfter, onPage);
 }
 
 async function htmlImage(file: File, signal?: AbortSignal): Promise<{ source: CanvasImageSource; width: number; height: number; close: () => void }> {

@@ -2,12 +2,13 @@
 import {useEffect,useRef,useState} from 'react';
 import {readStudyFile,MAX_STUDY_FILE_BYTES} from '../lib/files';
 import {appendImportedBlock,removeImportedBlocks,MAX_UPLOAD_DRAFT_CHARACTERS,type ImportedBlock} from '../lib/upload-content';
-import type {VisualPage} from '../lib/visual-documents';
+import type {StudyPage,VisualPage} from '../lib/visual-documents';
+import {MAX_PDF_AI_PAGES,pdfBatchFits} from '../lib/pdf-read-batch';
 import {useLanguage,type TranslationVariables} from '../lib/i18n';
 import {uploadTranslations} from '../lib/upload-translations';
 
 export type UploadEntry={id:string;file:File;visual:boolean;status:'ready'|'reading'|'done'|'error'|'stopped';message:string;messageValues?:TranslationVariables;pagesRead:number;blocks:ImportedBlock[];preview?:string;warnings:string[]};
-type Options={value:string;onChange:(value:string)=>void;onTitle:(title:string)=>void;onBusy:(message:string)=>void;notify:(message:string,error?:boolean)=>void;canAnalyze:boolean;onConnect:()=>void;analyze:(page:VisualPage,signal:AbortSignal)=>Promise<string>};
+type Options={value:string;onChange:(value:string)=>void;onTitle:(title:string)=>void;onBusy:(message:string)=>void;notify:(message:string,error?:boolean)=>void;canAnalyze:boolean;onConnect:()=>void;analyze:(page:VisualPage,signal:AbortSignal)=>Promise<string>;analyzeBatch?:(pages:readonly VisualPage[],signal:AbortSignal)=>Promise<string[]|null>};
 const visualExtensions=new Set(['pdf','pptx','jpg','jpeg','png','webp','gif','bmp']);
 
 function readingError(error:unknown,fallback:string){
@@ -64,7 +65,7 @@ export function useMaterialUploads(options:Options){
       }
       if(mounted.current&&!controller.signal.aborted){
         const pending=itemsRef.current.some(item=>item.visual&&item.status==='ready');
-        optionsRef.current.notify(translateRef.current('Files added: {count}.',{count:added})+(pending?' '+translateRef.current('Read visuals with AI, or generate to read them automatically.') : ''),added!==files.length);
+        optionsRef.current.notify(translateRef.current('Files added: {count}.',{count:added})+(pending?' '+translateRef.current('Choose Read files to process your attachments.') : ''),added!==files.length);
       }
     }finally{controllerRef.current=null;working.current=false;if(mounted.current){setProgress('');setRunning(false);optionsRef.current.onBusy('')}}
   }
@@ -73,7 +74,6 @@ export function useMaterialUploads(options:Options){
     if(working.current)return {complete:false,text:valueRef.current};
     const pending=itemsRef.current.filter(item=>item.visual&&item.status!=='done'&&(!ids||ids.includes(item.id)));
     if(!pending.length)return {complete:!itemsRef.current.some(item=>item.status!=='done'),text:valueRef.current};
-    if(!optionsRef.current.canAnalyze){optionsRef.current.onConnect();optionsRef.current.notify(translateRef.current('Connect a vision-capable AI model to read images and document pages.'),true);return {complete:false,text:valueRef.current}}
     const controller=new AbortController();controllerRef.current=controller;working.current=true;setRunning(true);optionsRef.current.onBusy(translateRef.current('Reading your documents'));
     try{
       for(const queued of pending){
@@ -82,7 +82,10 @@ export function useMaterialUploads(options:Options){
         patch(item.id,{status:'reading',message:'Preparing visual pages…'});
         let rendering=true;
         try{
-          const isPowerPoint=item.file.name.toLowerCase().endsWith('.pptx');
+          const name=item.file.name.toLowerCase();
+          const isPowerPoint=name.endsWith('.pptx');
+          const isPdf=name.endsWith('.pdf');
+          const signal=controller.signal;
           const iterator=isPowerPoint?(await import('../lib/visual-powerpoint')).renderPowerPointVisuals(item.file,{
             signal:controller.signal,
             onSlide(number){
@@ -95,26 +98,69 @@ export function useMaterialUploads(options:Options){
               setProgress('Converting {filename} · slide {number} to PDF');setProgressValues({filename:item.file.name,number});
               patch(item.id,{message:'Converting slide {number} to PDF…',messageValues:{number}});
             },
-          }):(await import('../lib/visual-documents')).renderVisualDocument(item.file,{signal:controller.signal});
-          let pageNumber=0;
-          for await(const page of iterator){
-            pageNumber++;
-            if(controller.signal.aborted)throw new DOMException('Reading stopped','AbortError');
-            if(pageNumber<=item.pagesRead)continue;
-            if(!itemsRef.current.some(current=>current.id===item.id))break;
-            const detail=page.label;
-            setProgress(isPowerPoint?'Reading {filename} · slide {number}':'Reading {filename} · page {number}');setProgressValues({filename:item.file.name,number:pageNumber});
-            patch(item.id,{message:isPowerPoint?'Reading slide {number}…':'Reading page {number}…',messageValues:{number:pageNumber}});
+          }):isPdf?(await import('../lib/visual-documents')).readPdfForStudy(item.file,signal,item.pagesRead,(number,total)=>{
+              setProgress('Preparing {filename} · page {number} of {total}');
+              setProgressValues({filename:item.file.name,number,total});
+              patch(item.id,{message:'Preparing page {number} of {total}…',messageValues:{number,total}});
+            })
+            :(await import('../lib/visual-documents')).renderVisualDocument(item.file,{signal});
+          let pageNumber=isPdf?item.pagesRead:0;
+          const batch: {page:VisualPage;number:number}[]=[];
+          function commit(page:StudyPage,number:number,content:string){
+            signal.throwIfAborted();
+            const current=itemsRef.current.find(entry=>entry.id===queued.id);if(!current)return;
+            const blank='kind' in page&&page.kind==='blank';
+            const warnings=[...current.warnings,...(page.warnings||[])];
+            let blocks=current.blocks;
+            if(blank)warnings.push('Blank PDF pages were skipped.');
+            else{
+              const result=appendImportedBlock(valueRef.current,page.label,content);
+              change(result.value);
+              blocks=[...blocks,result.block];
+            }
+            patch(current.id,{pagesRead:number,blocks,warnings:[...new Set(warnings)].slice(0,12)});
+          }
+          async function readBatch(){
+            if(!batch.length)return;
+            signal.throwIfAborted();
             rendering=false;
-            const reply=await optionsRef.current.analyze(page,controller.signal);
-            if(controller.signal.aborted)throw new DOMException('Reading stopped','AbortError');
-            const current=itemsRef.current.find(current=>current.id===item.id);if(!current)break;
-            const result=appendImportedBlock(valueRef.current,detail,reply);
-            change(result.value);
-            patch(item.id,{pagesRead:pageNumber,blocks:[...current.blocks,result.block],warnings:[...new Set([...current.warnings,...(page.warnings||[])])].slice(0,12)});
+            const {analyze,analyzeBatch,canAnalyze,onConnect}=optionsRef.current;
+            if(!canAnalyze){
+              onConnect();
+              throw new Error('Connect a vision-capable AI model to read images and document pages.');
+            }
+            const number=batch[0].number;
+            const last=batch[batch.length-1].number;
+            const values={filename:queued.file.name,number,last};
+            setProgress(batch.length>1?'Reading {filename} · pages {number}–{last}':isPowerPoint?'Reading {filename} · slide {number}':'Reading {filename} · page {number}');
+            setProgressValues(values);
+            patch(queued.id,{message:batch.length>1?'Reading pages {number}–{last}…':isPowerPoint?'Reading slide {number}…':'Reading page {number}…',messageValues:values});
+            const replies=batch.length>1&&analyzeBatch?await analyzeBatch(batch.map(entry=>entry.page),signal):null;
+            for(const [index,entry] of batch.entries()){
+              signal.throwIfAborted();
+              commit(entry.page,entry.number,replies?.[index]??await analyze(entry.page,signal));
+            }
+            batch.length=0;
             rendering=true;
           }
-          if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:'done',message:isPowerPoint?'Visual reading complete · slides: {count}':'Visual reading complete · pages/images: {count}',messageValues:{count:pageNumber}});
+          for await(const page of iterator){
+            pageNumber++;
+            signal.throwIfAborted();
+            if(pageNumber<=item.pagesRead)continue;
+            if(!itemsRef.current.some(current=>current.id===item.id))break;
+            if('kind' in page){
+              await readBatch();
+              rendering=false;
+              commit(page,pageNumber,page.text);
+              rendering=true;
+              continue;
+            }
+            if(batch.length&&!pdfBatchFits([...batch.map(entry=>entry.page),page]))await readBatch();
+            batch.push({page,number:pageNumber});
+            if(!isPdf||!optionsRef.current.analyzeBatch||batch.length>=MAX_PDF_AI_PAGES)await readBatch();
+          }
+          await readBatch();
+          if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:'done',message:isPowerPoint?'Visual reading complete · slides: {count}':isPdf?'PDF reading complete · pages: {count}':'Visual reading complete · pages/images: {count}',messageValues:{count:pageNumber}});
         }catch(error){
           const stopped=controller.signal.aborted;
           if(itemsRef.current.some(current=>current.id===item.id))patch(item.id,{status:stopped?'stopped':'error',message:stopped?'Stopped. Read again to continue from the next unread page.':readingError(error,'Visual reading failed. Try again.')});
@@ -141,6 +187,6 @@ export function useMaterialUploads(options:Options){
     change(text);update(()=>[]);optionsRef.current.notify(translateRef.current(edited?'Files cleared. Your edited notes were kept.':'Files and their unchanged imported content cleared.'));
   }
   function reset(){controllerRef.current?.abort();itemsRef.current.forEach(item=>{if(item.preview)URL.revokeObjectURL(item.preview)});update(()=>[])}
-  return {items,progress:t(progress,progressValues),running,add,read,remove,clear,reset,stop:()=>controllerRef.current?.abort(),canAnalyze:options.canAnalyze,connect:options.onConnect,pending:items.some(item=>item.visual&&item.status!=='done')};
+  return {items,progress:t(progress,progressValues),running,add,read,remove,clear,reset,stop:()=>controllerRef.current?.abort(),pending:items.some(item=>item.visual&&item.status!=='done')};
 }
 export type MaterialUploads=ReturnType<typeof useMaterialUploads>;

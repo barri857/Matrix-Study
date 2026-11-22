@@ -16,7 +16,7 @@ await build({entryPoints:[join(root,'app/use-material-upload.ts')],outfile:outpu
       'export const useState=(value)=>globalThis.hooks.state(value);export const useRef=(value)=>globalThis.hooks.ref(value);export const useEffect=(fn)=>globalThis.hooks.effect(fn);':
       args.path.endsWith('/files')?'export const MAX_STUDY_FILE_BYTES=12582912;export const readStudyFile=(file)=>globalThis.readText(file);':
       args.path.endsWith('/i18n')?'export const useLanguage=()=>({t:(text,values)=>text.replace(/\\{(\\w+)\\}/g,(match,key)=>values?.[key]??match)});':
-      'export const renderVisualDocument=(file,options)=>globalThis.visualPages(file,options);export const renderPowerPointVisuals=renderVisualDocument;',loader:'js'}));
+      'export const renderVisualDocument=(file,options)=>globalThis.visualPages(file,options);export const renderPowerPointVisuals=renderVisualDocument;export async function* readPdfForStudy(file,signal,startAfter){let index=0;for await(const page of renderVisualDocument(file,{signal}))if(++index>startAfter)yield page;}',loader:'js'}));
   },
 }]});
 const {useMaterialUploads}=await import(pathToFileURL(output));
@@ -25,7 +25,7 @@ await build({entryPoints:[join(root,'lib/upload-content.ts')],outfile:provenance
 const {appendImportedBlock,removeImportedBlocks,splitStudyMaterial}=await import(pathToFileURL(provenance));
 after(async()=>{await unlink(output);await unlink(provenance);await rmdir(temporary)});
 
-function harness(analyze=async()=> 'Recognized diagram'){
+function harness(analyze=async()=> 'Recognized diagram',extra={}){
   let cursor=0;const state=[],cleanup=[],notifications=[];let source='My own notes';
   globalThis.hooks={
     state(value){const slot=cursor++;if(!(slot in state))state[slot]=value;return[state[slot],next=>{state[slot]=typeof next==='function'?next(state[slot]):next}]},
@@ -34,7 +34,7 @@ function harness(analyze=async()=> 'Recognized diagram'){
   };
   globalThis.readText=file=>file.text();
   globalThis.visualPages=async function*(file,{signal}){for(let number=1;number<=2;number++){if(signal.aborted)throw new DOMException('Stopped','AbortError');yield{data:'aGVsbG8=',mimeType:'image/png',label:`${file.name} page ${number}`,text:'',width:10,height:10}}};
-  const options={get value(){return source},onChange(value){source=value},onTitle(){},onBusy(){},notify(message,error){notifications.push({message,error})},canAnalyze:true,onConnect(){},analyze};
+  const options={get value(){return source},onChange(value){source=value},onTitle(){},onBusy(){},notify(message,error){notifications.push({message,error})},canAnalyze:true,onConnect(){},analyze,...extra};
   return{render(){cursor=0;return useMaterialUploads(options)},get value(){return source},notifications,cleanup(){cleanup.forEach(fn=>fn?.())}};
 }
 
@@ -111,6 +111,43 @@ test('visual reading continues past the old kit limit and all content can be sav
   assert.ok(parts.every(part=>part.length<=120000));
   assert.equal(parts.join(''),result.text);
   assert.match(parts[1],/^\[Source: /);
+  app.cleanup();
+});
+
+test('PDFs keep local and scanned pages in order, batching only consecutive images',async()=>{
+  const requests=[];
+  const app=harness(async page=>{requests.push([page.label]);return page.label;},{
+    analyzeBatch:async pages=>{const labels=pages.map(page=>page.label);requests.push(labels);return labels;},
+  });
+  globalThis.visualPages=async function*(){
+    yield {kind:'text',label:'page 1',text:'Selectable text'};
+    for(const index of [2,3,4])yield {label:'page '+index,text:'',data:'aGVsbG8=',mimeType:'image/png'};
+    yield {kind:'blank',label:'page 5',text:''};
+    yield {label:'page 6',text:'',data:'aGVsbG8=',mimeType:'image/png'};
+  };
+  await app.render().add([new File(['pdf'],'mixed.pdf')]);
+  const response=await app.render().read();
+  assert.equal(response.complete,true);
+  assert.deepEqual(requests,[['page 2','page 3','page 4'],['page 6']]);
+  assert.match(response.text,/Selectable text[\s\S]*Source: page 4[\s\S]*Source: page 6/);
+  assert.doesNotMatch(response.text,/page 5/);
+  assert.equal(app.render().items[0].pagesRead,6);
+  app.cleanup();
+});
+
+test('a selectable-text PDF can be read without an AI connection',async()=>{
+  const app=harness(async ()=>assert.fail('Local text should never be sent to AI'),{
+    canAnalyze:false,onConnect:()=>assert.fail('Local reading should not open settings'),
+  });
+  globalThis.visualPages=async function*(){
+    yield {kind:'text',label:'page 1',text:'Selectable text'};
+    yield {kind:'blank',label:'page 2',text:''};
+  };
+  await app.render().add([new File(['pdf'],'notes.pdf')]);
+  const result=await app.render().read();
+  assert.equal(result.complete,true);
+  assert.match(result.text,/Selectable text/);
+  assert.doesNotMatch(result.text,/page 2/);
   app.cleanup();
 });
 
