@@ -37,7 +37,10 @@ function readableAccent(color:string,backgrounds:string[],minimum:number){const 
 const emptyApi:ApiSettings={provider:'openai',model:providers.openai.model,apiKey:'',remember:false};
 function Logo(){return <span className="matrix-logo" aria-hidden="true">{Array.from({length:9},(_,i)=><i key={i}/>)}</span>}
 function Markdown({children,guide=false}:{children:string;guide?:boolean}){
-  return <div className="markdown"><ReactMarkdown remarkPlugins={guide?[remarkGfm]:undefined}>{children}</ReactMarkdown></div>;
+  return <div className="markdown"><ReactMarkdown
+    remarkPlugins={guide?[remarkGfm]:undefined}
+    components={{img:({alt})=>alt?<span>{alt}</span>:null}}
+  >{children}</ReactMarkdown></div>;
 }
 function Modal({title,children,close,wide=false}:{title:string;children:ReactNode;close:()=>void;wide?:boolean}){const {t}=useLanguage(matrixTranslations);const ref=useRef<HTMLDivElement>(null);useEffect(()=>{const previous=document.activeElement as HTMLElement;ref.current?.focus();const fn=(e:KeyboardEvent)=>{if(e.key==='Escape')close();if(e.key==='Tab'){const items=ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input,textarea,select,a[href],[tabindex="0"]');if(!items?.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===ref.current)){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}};document.addEventListener('keydown',fn);const old=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.removeEventListener('keydown',fn);document.body.style.overflow=old;previous?.focus();};},[]);return <div className="modal-backdrop" onClick={e=>e.target===e.currentTarget&&close()}><div role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref} className={`modal ${wide?'wide':''}`}><div className="modal-header"><h2>{title}</h2><button className="icon-button" aria-label={t("Close dialog")} onClick={close}><X size={20}/></button></div><div className="modal-body">{children}</div></div></div>}
 const localDateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;

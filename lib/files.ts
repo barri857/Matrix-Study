@@ -25,7 +25,13 @@ export async function readStudyFile(file: File, limit=MAX_STUDY_CHARACTERS): Pro
     return text;
   }
   if(ext==='docx') {const mammoth=await import('mammoth'); return checkedText((await mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()})).value,limit);}
-  if(['html','htm'].includes(ext||'')){const document=new DOMParser().parseFromString(await file.text(),'text/html');document.querySelectorAll('script,style,template,noscript').forEach(node=>node.remove());return checkedText(document.body.textContent||'',limit);}
+  if(['html','htm'].includes(ext||'')){
+    const template=document.createElement('template');
+    // Keep uploaded markup in an inert fragment to avoid loading its resources.
+    template.innerHTML=await file.text();
+    template.content.querySelectorAll('script,style,template,noscript,title').forEach(node=>node.remove());
+    return checkedText(template.content.textContent||'',limit);
+  }
   if(['txt','md','markdown','csv','json','yaml','yml','log','tex','srt','vtt'].includes(ext||''))return checkedText(await file.text(),limit);
   throw new Error('This file format is not supported yet. Use an image, PDF, DOCX, PPTX, Markdown, text, CSV, JSON, HTML or captions.');
 }
