@@ -1,0 +1,38 @@
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.setting h3 { margin: 0; }
+.switcher {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--surface, transparent);
+}
+.choice {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 12px;
+  min-height: 44px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.choice:hover { color: var(--text); background: var(--hover, rgba(128,128,128,.12)); }
+.choice[aria-pressed="true"] { color: var(--text); background: var(--accent-soft, rgba(128,128,128,.18)); }
+.choice:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
