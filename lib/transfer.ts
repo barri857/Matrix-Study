@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { validateKit, type Kit } from './study';
-import { emptyWorkspace, mergeGuestWorkspace, readWorkspace, type Workspace } from './workspace';
+import { emptyWorkspace, mergeGuestWorkspace, readWorkspace, safeBookmarkUrl, type Workspace } from './workspace';
 
 export const TRANSFER_MAX_BYTES = 12 * 1024 * 1024;
 const safeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
@@ -16,9 +16,7 @@ const workspaceSchema = z.object({
   version: z.literal(1), updatedAt: timestamp,
   tasks: z.array(z.object({ id: safeId, title: label, date, subject, done: z.boolean() })).max(500),
   notes: z.array(z.object({ id: safeId, title: label, body: z.string().max(30000), subject, updatedAt: timestamp })).max(100),
-  bookmarks: z.array(z.object({ id: safeId, title: label, subject, url: z.string().max(4000).url().refine(value => {
-    const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password;
-  }) })).max(300),
+  bookmarks: z.array(z.object({ id: safeId, title: label, subject, url: z.string().max(4000).refine(value => safeBookmarkUrl(value) !== null) })).max(300),
   courses: z.record(z.string().max(100).refine(value => !['__proto__', 'constructor', 'prototype'].includes(value)), courseExams).refine(value => Object.keys(value).length <= 100),
   grades: z.array(z.object({ id: safeId, title: label, score: percentage, weight: percentage })).max(100),
 });

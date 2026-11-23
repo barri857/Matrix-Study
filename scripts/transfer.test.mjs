@@ -25,6 +25,11 @@ test('import rejects invalid formats, malicious bookmarks and malformed question
   assert.throws(() => parseTransferBundle('not-json'));
   assert.throws(() => parseTransferBundle(JSON.stringify({ format: 'other', version: 1 })));
   const bundle = createTransferBundle([demoKits[0]], emptyWorkspace(), 1);
+  const incompleteBookmark = { id: 'b1', title: 'Incomplete', subject: '', url: 'https://' };
+  assert.throws(
+    () => parseTransferBundle(JSON.stringify({ ...bundle, workspace: { ...bundle.workspace, bookmarks: [incompleteBookmark] } })),
+    /invalid notes, plans, links, or grades/,
+  );
   assert.throws(() => parseTransferBundle(JSON.stringify({ ...bundle, workspace: { ...bundle.workspace, bookmarks: [{ id: 'b1', title: 'Bad', subject: '', url: 'javascript:alert(1)' }] } })));
   assert.throws(() => parseTransferBundle(JSON.stringify({ ...bundle, kits: [{ ...demoKits[0], questions: [{ ...demoKits[0].questions[0], answer: 99 }] }] })));
 });

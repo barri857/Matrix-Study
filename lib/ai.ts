@@ -65,7 +65,7 @@ export const aiRequestSchema = z.object({
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) })).max(12).optional(),
 }).superRefine((input, context) => {
   if (!isGuideAction(input.action) && input.text.length > MAX_STUDY_SOURCE_LENGTH) {
-    context.addIssue({ code: z.ZodIssueCode.too_big, type: "string", inclusive: true, maximum: MAX_STUDY_SOURCE_LENGTH, path: ["text"] });
+    context.addIssue({ code: "too_big", origin: "string", inclusive: true, maximum: MAX_STUDY_SOURCE_LENGTH, path: ["text"] });
   }
   if (input.action === "regenerate-guide" && input.text.trim().length < 20 && !input.guide?.trim()) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["text"], message: "Add study material or a guide to regenerate." });

@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {idSchema} from '../app/api/_shared';
+import {safeBookmarkUrl} from '../lib/workspace';
 const timestamp = z.number().finite().nonnegative();
 const title = z.string().max(300);
 const subject = z.string().max(100);
@@ -8,10 +9,7 @@ const percentage = z.number().finite().min(0).max(100);
 const exam = z.object({ date, time: z.string().regex(/^(?:(?:[01]\d|2[0-3]):[0-5]\d)?$/), weight: percentage, notes: z.string().max(10000) });
 const blankExam = { date: '', time: '', weight: 0, notes: '' };
 const courseExams = z.object({ Midterm: exam.default(blankExam), Endterm: exam, Final: exam, Custom: exam.extend({ title: z.string().max(160).default('') }).default({ ...blankExam, title: '' }) });
-const httpsUrl = z.string().max(4000).url().refine(value => {
-  const parsed = new URL(value);
-  return parsed.protocol === "https:" && !parsed.username && !parsed.password;
-});
+const httpsUrl = z.string().max(4000).refine(value => safeBookmarkUrl(value) !== null);
 export const workspaceSchema = z.object({
   version: z.literal(1),
   updatedAt: timestamp,

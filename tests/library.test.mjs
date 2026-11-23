@@ -71,6 +71,7 @@ test("owned libraries, limits, stale updates, share revocation and private progr
   assert.equal((await workspace.PUT(payload("workspace", { data: { ...planner, updatedAt: 99, tasks: [] } }))).status, 200);
   assert.equal((await (await workspace.GET()).json()).data.tasks.length, 1);
   assert.equal((await (await workspace.GET()).json()).data.apiKey, undefined);
+  assert.equal((await workspace.PUT(payload("workspace", { data: { ...planner, bookmarks: [{ id: "incomplete", title: "Incomplete", url: "https://", subject: "" }] } }))).status, 400);
   assert.equal((await workspace.PUT(payload("workspace", { data: { ...planner, bookmarks: [{ id: "unsafe", title: "Bad", url: "javascript:alert(1)", subject: "" }] } }))).status, 400);
   assert.equal((await workspace.PUT(payload("workspace", { data: planner }, "https://attacker.test"))).status, 403);
   const share = await (await sharing.POST(payload("share", { id: "private", enabled: true }))).json();
